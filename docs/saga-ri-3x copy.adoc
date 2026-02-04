@@ -1,0 +1,191 @@
+= SAGA RI 3x
+:toc: right
+:toclevels:
+:sectnums:
+:sectnumlevel
+
+== 1 Minute Summary: Product Storage in H2
+
+=== CQRS Event-Driven Architecture
+
+* **Command Side**: [CreateProductCommand](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/command/CreateProductCommand.java:9:0-19:1) → `ProductCreatedEvent` → H2 Database
+* **Query Side**: [ProductEventsHandler](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/query/ProductEventsHandler.java:16:0-91:1) listens to events → Updates [ProductEntity](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductEntity.java:12:0-31:1) → Stores in H2
+* **Database**: JPA [ProductEntity](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductEntity.java:12:0-31:1) with fields: `productId`, `title`, `price`, `quantity`
+* **Repository**: [ProductsRepository](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductsRepository.java:4:0-9:1) extends `JpaRepository` for CRUD operations
+
+== 2 Minute Summary: Product Storage Flow
+
+=== Command Processing
+[source,java]
+----
+CreateProductCommand → ProductAggregate → ProductCreatedEvent
+----
+
+=== Event Handling
+[source,java]
+----
+@EventHandler
+public void on(ProductCreatedEvent event) {
+    ProductEntity productEntity = new ProductEntity();
+    BeanUtils.copyProperties(event, productEntity);
+    productsRepository.save(productEntity);
+}
+----
+
+=== Database Schema
+* **Table**: `products`
+* **Entity**: [ProductEntity](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductEntity.java:12:0-31:1) with JPA annotations
+* **Repository**: Spring Data JPA with custom queries
+* **Database**: H2 in-memory database
+
+=== Query Processing
+* [ProductsQueryController](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/query/rest/ProductsQueryController.java:13:0-32:1) → `FindProductsQuery` → [ProductsQueryHandler](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/query/ProductsQueryHandler.java:13:0-39:1)
+* Returns `ProductRestModel` from H2 data
+
+== 3 Minute Summary: Complete Product Storage Architecture
+
+=== 1. Command Flow (Write Side)
+[source,java]
+----
+REST Controller → CreateProductCommand → ProductAggregate
+→ ProductCreatedEvent → Event Bus
+----
+
+=== 2. Event Processing (Event Sourcing)
+[source,java]
+----
+@Component
+@ProcessingGroup("product-group")
+public class ProductEventsHandler {
+    
+    @EventHandler
+    public void on(ProductCreatedEvent event) {
+        ProductEntity productEntity = new ProductEntity();
+        BeanUtils.copyProperties(event, productEntity);
+        productsRepository.save(productEntity);
+    }
+    
+    @EventHandler  
+    public void on(ProductReservedEvent event) {
+        // Update quantity
+        ProductEntity product = productsRepository.findByProductId(event.getProductId());
+        product.setQuantity(product.getQuantity() - event.getQuantity());
+        productsRepository.save(product);
+    }
+}
+----
+
+##############################################
+
+---
+
+I'll explain what's happening in the product storage system based on the code analysis. Let me provide a comprehensive explanation of the CQRS architecture and event-driven flow.
+
+## CQRS Event-Driven Product Storage System
+
+### Architecture Overview
+
+This system implements **CQRS (Command Query Responsibility Segregation)** with **Event Sourcing** pattern using Axon Framework. The key idea is separating write operations (commands) from read operations (queries).
+
+### 1. Command Flow (Write Side)
+
+**When a product is created:**
+
+```
+REST API → CreateProductCommand → ProductAggregate → ProductCreatedEvent → Event Bus
+```
+
+- **CreateProductCommand**: Contains product data (productId, title, price, quantity)
+- **ProductAggregate**: Root entity that validates and processes the command
+- **ProductCreatedEvent**: Immutable event representing the fact that a product was created
+- **Event Bus**: Distributes events to all interested handlers
+
+### 2. Event Processing (Event Sourcing)
+
+**ProductEventsHandler** listens for events and updates the read database:
+
+```java
+@EventHandler
+public void on(ProductCreatedEvent event) {
+    ProductEntity productEntity = new ProductEntity();
+    BeanUtils.copyProperties(event, productEntity);
+    productsRepository.save(productEntity);
+}
+```
+
+This handler:
+- Receives `ProductCreatedEvent` from the event bus
+- Creates a new [ProductEntity](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductEntity.java:12:0-31:1) (JPA entity for H2 database)
+- Copies event data to the entity
+- Persists to H2 database via Spring Data JPA
+
+### 3. Data Persistence Layer
+
+**ProductEntity** (JPA Entity):
+- Maps to `products` table in H2 database
+- Fields: `productId` (PK), `title`, `price`, `quantity`
+- Uses Lombok `@Data` for getters/setters
+
+**ProductsRepository** (Spring Data JPA):
+- Extends `JpaRepository<ProductEntity, String>`
+- Provides CRUD operations automatically
+- Custom methods: [findByProductId()](cci:1://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductsRepository.java:6:1-6:49), [findByProductIdOrTitle()](cci:1://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/data/ProductsRepository.java:7:1-7:70)
+
+### 4. Query Flow (Read Side)
+
+**When products are requested:**
+
+```
+REST API → FindProductsQuery → QueryGateway → ProductsQueryHandler → H2 Database
+```
+
+**ProductsQueryController**:
+```java
+@GetMapping
+public List<ProductRestModel> getProducts() {
+    FindProductsQuery query = new FindProductsQuery();
+    return queryGateway.query(query, 
+        ResponseTypes.multipleInstancesOf(ProductRestModel.class)).join();
+}
+```
+
+**ProductsQueryHandler**:
+```java
+@QueryHandler
+public List<ProductRestModel> findProducts(FindProductsQuery query) {
+    List<ProductEntity> storedProducts = productsRepository.findAll();
+    // Convert entities to REST models
+    return productsRest;
+}
+```
+
+### 5. Eventual Consistency
+
+The system maintains **eventual consistency**:
+- Commands are processed immediately on write side
+- Events are asynchronously processed to update read side
+- There's a small delay between command execution and query availability
+
+### 6. Additional Event Handlers
+
+The system also handles:
+- **ProductReservedEvent**: Decrements product quantity
+- **ProductReservationCancelledEvent**: Increments product quantity back
+
+### Key Benefits
+
+1. **Scalability**: Read and write sides can be scaled independently
+2. **Performance**: Optimized read models for querying
+3. **Audit Trail**: Complete event history provides audit capabilities
+4. **Flexibility**: Easy to add new event handlers without modifying existing code
+5. **Resilience**: Event replay capability for system recovery
+
+### H2 Database Role
+
+H2 serves as the **read model database**:
+- In-memory database for development/testing
+- Stores denormalized product data optimized for queries
+- Automatically configured by Spring Boot
+- Provides fast read operations for the query side
+
+This architecture ensures that the system maintains a complete audit trail through events while providing fast, optimized read access to product data through the H2 database.

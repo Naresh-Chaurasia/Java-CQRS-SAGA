@@ -1,0 +1,201 @@
+= SAGA RI
+:toc: right
+:toclevels: 5
+:sectnums:
+:sectnumlevel
+
+== Microservices
+
+== GIT
+
+* Java-CQRS-SAGA
+* Java-CQRS-SAGA-branch-1
+** Able to add product and view in AxonServer
+
+
+
+##############################################
+
+---
+
+
+[cols="1,1,1,1,1,2", options="header"]
+|===
+| Service
+| Port
+| Spring Boot Parent
+| Java Version
+| Spring Cloud Version
+|
+
+| Eureka RI
+| 8010
+| 3.2.1
+| 17
+| 2023.0.0
+| http://localhost:8761/
+
+| API Gateway RI
+| 8020
+| 3.2.1
+| 17
+| 2023.0.0
+|
+
+| Products RI
+| 8030
+| 3.2.1
+| 17
+| 2023.0.0
+a|
+- http://localhost:8030/swagger-ui/index.html
+|===
+
+
+##############################################
+
+---
+
+=== Products
+
+* Axon Framework
+* Axon Framework is a Java framework used in distributed microservices to build systems using CQRS and Event-Driven Architecture.
+
+* *CreateProductCommand*: A command class represents a request to change data and contains only the required information to perform that change.
+It is read-only and tells Axon what to do and which aggregate should handle it.
+
+----
+@Builder
+@Data
+public class CreateProductCommand {
+	
+	@TargetAggregateIdentifier
+	private final String productId;
+	private final String title;
+	private final BigDecimal price;
+	private final Integer quantity;
+	
+}
+----
+
+
+* /Users/nareshchaurasia/nc/technical-reference-library/ms/sergey/Sergey-Kargopolov-SAGA-CQRS.adoc
+
+
+* *Command Gateway*
+* So now that we have created the Command object, we are ready to send this command to the Command Gateway* In this video lesson, we will inject the Command Gateway into our controller class* The Command Gateway is an object that is used to send the command we created to the Command Bus* You can think of the Command Gateway as an API used to send commands, and the Command Bus as the mechanism that receives the command and routes it to the appropriate Command Handler.
+
+
+##############################################
+
+---
+* *Aggregate*
+* An aggregate represents the core business entity in a microservice* It keeps the current state of that entity, handles incoming commands, applies business rules, and decides whether a requested change is valid or should be rejected* All state changes happen through events, which makes the aggregate the single source of truth for that data.
+
+---
+
+*Event-Driven Microservice Architecture*
+
+*Overview*: Building an event-driven microservice using Axon Framework with CQRS pattern.
+
+*Flow*
+
+* *REST API* receives POST request with JSON product data
+* *Controller* converts JSON to [CreateProductCommand] 
+* *Command Gateway* sends command to [ProductAggregate]
+* *Aggregate* validates business rules and publishes `ProductCreatedEvent`
+* *Event Store* persists the event for audit/replay
+* *Database* updates product state
+
+---
+
+* AggregateLifecycle.apply() → publishes event
+* Axon stores event in Event Store
+* Axon calls EventSourcingHandler → updates aggregate state
+* Aggregate state is persisted to H2 database
+
+*Key Benefits*
+
+* *Command/Query separation* - optimized for different workloads
+* *Event sourcing* - complete audit trail and state reconstruction
+* *Scalability* - async processing, eventual consistency
+* *Resilience* - event replay for recovery
+
+
+---
+
+
+.Aggregate N/a
+[%collapsible]
+====
+* Aggregate is the *core domain object* of a microservice.
+* It represents the *main business entity* and holds its *current state*.
+* In the products microservice, the aggregate is called *ProductAggregate*.
+
+* ProductAggregate stores current product data such as:
+* product title
+* product price
+* product quantity
+
+* Aggregate contains *command handler methods*.
+* Commands like *CreateProductCommand* are handled inside the aggregate.
+* The aggregate *validates commands* and decides whether an action is allowed.
+
+* Aggregate contains *business logic*.
+* Example: checking if a product can be created before creating it.
+
+* Aggregate uses *event sourcing handler methods*.
+* Every change in state is done by applying an *event*.
+* Events are stored in the *Event Store*.
+
+* When updating a product:
+* Axon creates an empty aggregate object
+* All past events are loaded from the Event Store
+* Events are replayed to rebuild the current state
+
+* Because of event replay:
+* Event sourcing handlers are called multiple times
+* Aggregate state is restored from history
+
+* Aggregate must have an *empty constructor* for Axon to recreate it.
+
+* ProductAggregate is the *heart of the application*
+* It controls state, business rules, and command processing
+====
+
+
+
+
+##############################################
+
+---
+
+=== AXON Server
+
+
+* /Users/nareshchaurasia/nc/Java-Architect/Java-Event-MS-RI/AxonServer-2024.2.19
+
+* /Users/nareshchaurasia/nc/Java-Architect/AxonServer-4.6.7/config
+** java -jar axonserver.jar
+
+----
+axoniq.axonserver.name=axonserver-1
+axoniq.axonserver.host=localhost
+server.port=8025
+axoniq.axonserver.standalone=true
+----
+
+##############################################
+
+---
+
+* http://localhost:8024/
+
+
+
+
+##############################################
+
+---
+
+
