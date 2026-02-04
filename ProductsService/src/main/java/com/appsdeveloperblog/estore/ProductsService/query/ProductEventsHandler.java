@@ -25,12 +25,12 @@ public class ProductEventsHandler {
 		this.productsRepository = productsRepository;
 	}
 	
-	@ExceptionHandler(resultType=Exception.class)
+	//@ExceptionHandler(resultType=Exception.class)
 	public void handle(Exception exception) throws Exception {
 		throw exception;
 	}
 	
-	@ExceptionHandler(resultType=IllegalArgumentException.class)
+	//@ExceptionHandler(resultType=IllegalArgumentException.class)
 	public void handle(IllegalArgumentException exception) {
 		// Log error message
 	}
@@ -50,7 +50,7 @@ public class ProductEventsHandler {
 
 	}
 	
-	@EventHandler
+	//@EventHandler
 	public void on(ProductReservedEvent productReservedEvent) {
 		ProductEntity productEntity = productsRepository.findByProductId(productReservedEvent.getProductId());
 		
