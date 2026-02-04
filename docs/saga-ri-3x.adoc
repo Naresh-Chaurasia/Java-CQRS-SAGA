@@ -8,6 +8,12 @@
 
 This system implements *CQRS (Command Query Responsibility Segregation)* with *Event Sourcing* using the Axon Framework.
 
+---
+
+image::./SAGA-Flow1.png[SAGA Flow 1]
+
+---
+
 The core idea is simple:
 
 * Write operations (commands) and read operations (queries) are separated
