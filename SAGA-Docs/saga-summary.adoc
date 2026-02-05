@@ -1,0 +1,167 @@
+= ProductsService Flow Explanation
+:toc: right
+:toclevels: 5
+:sectnums:5
+:sectnumlevel: 5
+
+== Product Creation Flow
+
+=== 1. Client Sends HTTP Request
+* POST to `/products` with product data in request body
+* `CreateProductRestModel` contains price, quantity, title
+
+=== 2. ProductsCommandController Receives Request
+* `@PostMapping` method receives the HTTP request
+* Creates `CreateProductCommand` from REST model data
+* Generates random `productId` using `UUID.randomUUID()`
+
+=== 3. CommandGateway Sends Command
+* `commandGateway.sendAndWait(createProductCommand)` sends command to Axon
+* This is the entry point to the CQRS system
+* Controller waits for response before continuing
+
+=== 4. CreateProductCommandInterceptor Checks
+* `ProductLookupRepository.findByProductIdOrTitle()`
+* If product exists → throws `IllegalStateException`
+* If not exists → continues to next step
+
+=== 5. ProductAggregate Handles Command
+* `@CommandHandler` constructor receives `CreateProductCommand`
+* Validates: price > 0, title not empty
+* Creates `ProductCreatedEvent`
+* Calls `AggregateLifecycle.apply(productCreatedEvent)`
+
+=== 6. Event Bus Broadcasts
+* Axon Framework Event Bus broadcasts `ProductCreatedEvent`
+* All event handlers receive the event
+
+=== 7. ProductEventsHandler Updates Database
+* `@EventHandler` method receives `ProductCreatedEvent`
+* Creates new `ProductEntity` from event data
+* Saves to `ProductsRepository` (read database)
+
+=== 8. Client Gets Response
+* HTTP 201 Created returned to client
+* Product now available for queries
+
+=== Key Components in Your Code
+
+* **REST Controller**: ProductsCommandController
+* **Gateway**: CommandGateway (Axon entry point)
+* **Command**: CreateProductCommand
+* **Interceptor**: CreateProductCommandInterceptor
+* **Aggregate**: ProductAggregate
+* **Event**: ProductCreatedEvent
+* **Event Handler**: ProductEventsHandler
+* **Error Handler**: ProductsServiceErrorHandler
+
+=== Complete Flow Summary
+
+1. **HTTP Request** → 2. **Controller** → 3. **CommandGateway** → 4. **Interceptor Validation** → 5. **Aggregate Processing** → 6. **Event Creation** → 7. **Database Update** → 8. **Response**
+
+This shows the complete flow from HTTP request to database update.
+
+##############################################
+
+== ProductsService Exception Handling & Rollback
+
+
+=== 1. Controller Level
+* **No exception handling** in current code
+* Commented out try-catch shows intended pattern:
+```java
+try {
+    returnValue = commandGateway.sendAndWait(createProductCommand);
+} catch (Exception ex) {
+    returnValue = ex.getLocalizedMessage();
+}
+```
+
+=== 2. CommandGateway Level
+* `sendAndWait()` propagates exceptions to controller
+* If any downstream component throws exception, it bubbles up here
+
+=== 3. Interceptor Level
+* **Throws**: `IllegalStateException` for duplicate products
+* **Handled by**: [ProductsServiceErrorHandler.handleIllegalStateException()](cci:1://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/errorhandling/ProductsServiceErrorHandler.java:15:1-21:2)
+* **Returns**: HTTP 500 with error message
+* **No rollback needed** - no changes made yet
+
+=== 4. Aggregate Level
+* **Throws**: `IllegalArgumentException` for invalid data (price <= 0, empty title)
+* **Handled by**: [ProductsServiceErrorHandler.handleOtherExceptions()](cci:1://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/errorhandling/ProductsServiceErrorHandler.java:23:1-28:2)
+* **Returns**: HTTP 500 with error message
+* **No rollback needed** - event not applied yet
+
+=== 5. Event Handler Level
+* **Throws**: Exceptions during database operations
+* **Handled by**: [ProductsServiceEventsErrorHandler.onError()](cci:1://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/core/errorhandling/ProductsServiceEventsErrorHandler.java:8:1-12:2)
+* **Action**: Re-throws exception (can be configured for retry)
+* **Rollback**: Event not marked as processed, will be retried
+
+== Rollback Mechanisms
+
+=== Event Sourcing Rollback
+* **Aggregate state** rebuilt from event stream
+* If event processing fails, aggregate state unchanged
+* Next retry will process same event again
+
+=== Database Transaction Rollback
+* `@Transactional` on event handler methods
+* If database save fails, transaction rolls back
+* Event remains unprocessed, will be retried
+
+=== Command Gateway Rollback
+* If any component throws exception, command fails
+* No partial state changes occur
+* Client receives error response
+
+== Error Handler Chain
+
+=== Primary Error Handlers
+1. **ProductsServiceErrorHandler** - HTTP layer exceptions
+2. **ProductsServiceEventsErrorHandler** - Event processing exceptions
+
+=== Exception Flow
+```
+Interceptor → IllegalStateException → ProductsServiceErrorHandler → HTTP 500
+Aggregate → IllegalArgumentException → ProductsServiceErrorHandler → HTTP 500  
+EventHandler → DatabaseException → ProductsServiceEventsErrorHandler → Retry
+```
+
+== Rollback Scenarios
+
+=== Scenario 1: Duplicate Product
+1. Interceptor throws `IllegalStateException`
+2. **No changes made** to database
+3. **No rollback needed**
+4. Client gets HTTP 500
+
+=== Scenario 2: Invalid Price
+1. Aggregate validates and throws `IllegalArgumentException`
+2. **Event not applied** to aggregate
+3. **No database changes**
+4. Client gets HTTP 500
+
+=== Scenario 3: Database Failure
+1. Event handler tries to save to database
+2. Database throws exception
+3. **Transaction rolls back**
+4. **Event will be retried** by Axon
+5. Aggregate state unchanged
+
+== Key Points for Interview
+
+* **Fail fast** - validate early, fail early
+* **No partial state** - either complete success or complete failure
+* **Event sourcing** provides natural rollback mechanism
+* **Transaction boundaries** at event handler level
+* **Retry mechanisms** built into Axon framework
+
+== Exception Handling Summary
+
+**Controller → Gateway → Interceptor → Aggregate → Event Handler**
+↓ ↓ ↓ ↓ ↓
+**HTTP Error** → **Command Fails** → **Validation Error** → **Business Error** → **Data Error**
+
+Each layer has appropriate error handling with minimal rollback complexity due to event sourcing design.

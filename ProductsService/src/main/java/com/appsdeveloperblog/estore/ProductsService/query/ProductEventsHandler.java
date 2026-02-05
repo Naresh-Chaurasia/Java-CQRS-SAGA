@@ -25,12 +25,12 @@ public class ProductEventsHandler {
 		this.productsRepository = productsRepository;
 	}
 	
-	//@ExceptionHandler(resultType=Exception.class)
+	@ExceptionHandler(resultType=Exception.class)
 	public void handle(Exception exception) throws Exception {
 		throw exception;
 	}
 	
-	//@ExceptionHandler(resultType=IllegalArgumentException.class)
+	@ExceptionHandler(resultType=IllegalArgumentException.class)
 	public void handle(IllegalArgumentException exception) {
 		// Log error message
 	}
@@ -47,6 +47,9 @@ public class ProductEventsHandler {
 		} catch (IllegalArgumentException ex) {
 			ex.printStackTrace();
 		}
+
+		// Forcing exception in Event Handler Class
+		// throw new IllegalArgumentException("Forcing exception in Event Handler Class");
 
 	}
 	
@@ -67,7 +70,7 @@ public class ProductEventsHandler {
 				" and orderId: " + productReservedEvent.getOrderId());
 	}
 	
-	@EventHandler
+	//@EventHandler
 	public void on(ProductReservationCancelledEvent productReservationCancelledEvent) {
 		ProductEntity currentlyStoredProduct =  productsRepository.findByProductId(productReservationCancelledEvent.getProductId());
 	

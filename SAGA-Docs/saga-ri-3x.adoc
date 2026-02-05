@@ -170,6 +170,39 @@ REST API → FindProductsQuery → QueryGateway → ProductsQueryHandler → H2 
 
 The query side reads from the optimized read database without touching aggregates.
 
+=== Query Flow with ProductsQueryHandler Role
+
+* *HTTP GET /products*
+Spring MVC routes the request to `ProductsQueryController.getProducts()`
+
+* *Create Query Object*
+A new query object is created:
+`new FindProductsQuery()`
+This is an empty query used to fetch all products
+
+* *Dispatch via QueryGateway*
+The controller calls:
+`queryGateway.query()`
+The query is sent to the Axon Query Bus
+
+* *Route to ProductsQueryHandler*
+Axon locates a method annotated with `@QueryHandler` in the `ProductsQueryHandler` class that accepts `FindProductsQuery`
+
+* *ProductsQueryHandler Executes*
+* Receives `FindProductsQuery` as input
+* Calls `productsRepository.findAll()` to fetch all products from the H2 database
+* Converts each `ProductEntity` to `ProductRestModel` using `BeanUtils.copyProperties()`
+* Returns a list of `ProductRestModel` objects
+
+* *Return Response*
+The response flows back through:
+`QueryGateway → Controller → JSON HTTP response`
+
+* *ProductsQueryHandler Role*
+Acts as a bridge between the Axon query mechanism and Spring Data JPA.
+It is responsible for handling query-side business logic and transforming persistence models into API response models.
+
+
 ---
 
 == 4.6. Eventual Consistency
@@ -209,3 +242,28 @@ The system also supports:
 * Stores denormalized data optimized for queries
 
 ---
+
+
+---
+
+##############################################
+
+=== Exception Handling
+
+I'll examine both files to understand how error handling works between the interceptor and the error handler.
+
+The [ProductsServiceErrorHandler]() handles exceptions from [CreateProductCommandInterceptor]() through Spring's `@ControllerAdvice` mechanism:
+
+**Error Flow:**
+1. [CreateProductCommandInterceptor](cci:2://file:///Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/ProductsService/src/main/java/com/appsdeveloperblog/estore/ProductsService/command/interceptors/CreateProductCommandInterceptor.java:16:0-54:1) throws `IllegalStateException` on line 43-46 when a duplicate product is found
+2. The exception propagates up through the Axon framework
+3. [ProductsServiceErrorHandler]() catches it via the `@ExceptionHandler` for `IllegalStateException` (lines 16-22)
+4. Returns HTTP 500 with error details in JSON format
+
+**Key Points:**
+- The interceptor specifically throws `IllegalStateException` for duplicate products
+- The error handler has a dedicated handler for `IllegalStateException` and a generic handler for other exceptions
+- Both return `HttpStatus.INTERNAL_SERVER_ERROR` with timestamped error messages
+- The `CommandExecutionException` handler (lines 31-36) would catch Axon-specific command failures
+
+The error handling works automatically due to Spring's exception handling mechanism - no manual error propagation needed.
