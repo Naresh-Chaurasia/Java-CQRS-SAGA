@@ -6,6 +6,12 @@
 
 == Microservices
 
+* Start Eureka
+* Start AxonServer
+* Start Products
+##############################################
+
+
 == GIT
 
 * Java-CQRS-SAGA
