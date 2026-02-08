@@ -94,26 +94,28 @@ public class OrderSaga {
  
 	}
 	
+	//Saga is fetching payment details.
+	// We are using CQRS, do we send Query and not HTTP.
 	@SagaEventHandler(associationProperty="orderId")
 	public void handle(ProductReservedEvent productReservedEvent) {
 		// Process user payment
         LOGGER.info("ProductReserveddEvent is called for productId: "+ productReservedEvent.getProductId() + 
         		" and orderId: " + productReservedEvent.getOrderId());
         
-    //     FetchUserPaymentDetailsQuery fetchUserPaymentDetailsQuery = 
-    //     		new FetchUserPaymentDetailsQuery(productReservedEvent.getUserId());
+        FetchUserPaymentDetailsQuery fetchUserPaymentDetailsQuery = 
+        		new FetchUserPaymentDetailsQuery(productReservedEvent.getUserId());
         
-    //     User userPaymentDetails = null;
+        User userPaymentDetails = null;
         
-    //     try {
-    //     	userPaymentDetails = queryGateway.query(fetchUserPaymentDetailsQuery, ResponseTypes.instanceOf(User.class)).join();
-    //     } catch(Exception ex) {
-    //     	LOGGER.error(ex.getMessage());
+        try {
+        	userPaymentDetails = queryGateway.query(fetchUserPaymentDetailsQuery, ResponseTypes.instanceOf(User.class)).join();
+        } catch(Exception ex) {
+        	LOGGER.error(ex.getMessage());
         	
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent,ex.getMessage());
-    //     	return;
-    //     }
+        	// Start compensating transaction
+        	// cancelProductReservation(productReservedEvent,ex.getMessage());
+        	return;
+        }
         
     //     if(userPaymentDetails == null) {
     //     	// Start compensating transaction
@@ -121,33 +123,33 @@ public class OrderSaga {
     //     	return;
     //     }
         
-    //     LOGGER.info("Successfully fetched user payment details for user " + userPaymentDetails.getFirstName());
+        LOGGER.info("Successfully fetched user payment details for user " + userPaymentDetails.getFirstName());
         
         
     //    scheduleId =  deadlineManager.schedule(Duration.of(120, ChronoUnit.SECONDS),
     //     		PAYMENT_PROCESSING_TIMEOUT_DEADLINE, productReservedEvent);
    
-    //     ProcessPaymentCommand proccessPaymentCommand = ProcessPaymentCommand.builder()
-    //     		.orderId(productReservedEvent.getOrderId())
-    //     		.paymentDetails(userPaymentDetails.getPaymentDetails())
-    //     		.paymentId(UUID.randomUUID().toString())
-    //     		.build();
+        ProcessPaymentCommand proccessPaymentCommand = ProcessPaymentCommand.builder()
+        		.orderId(productReservedEvent.getOrderId())
+        		.paymentDetails(userPaymentDetails.getPaymentDetails())
+        		.paymentId(UUID.randomUUID().toString())
+        		.build();
         
-    //     String result = null;
-    //     try {
-    //     result = commandGateway.sendAndWait(proccessPaymentCommand);
-    //     } catch(Exception ex) {
-    //     	LOGGER.error(ex.getMessage());
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent,ex.getMessage());
-    //     	return;
-    //     }
+        String result = null;
+        try {
+        result = commandGateway.sendAndWait(proccessPaymentCommand);
+        } catch(Exception ex) {
+        	LOGGER.error(ex.getMessage());
+        	// Start compensating transaction
+        	// cancelProductReservation(productReservedEvent,ex.getMessage());
+        	return;
+        }
         
-    //     if(result == null) {
-    //     	LOGGER.info("The ProcessPaymentCommand resulted in NULL. Initiating a compensating transaction");
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent, "Could not proccess user payment with provided payment details"); 
-    //     }
+        if(result == null) {
+        	LOGGER.info("The ProcessPaymentCommand resulted in NULL. Initiating a compensating transaction");
+        	// Start compensating transaction
+        	// cancelProductReservation(productReservedEvent, "Could not proccess user payment with provided payment details"); 
+        }
  
 	}
 	
@@ -169,10 +171,10 @@ public class OrderSaga {
 	}
 	
 	
-	//@SagaEventHandler(associationProperty="orderId")
+	@SagaEventHandler(associationProperty="orderId")
 	public void handle(PaymentProcessedEvent paymentProcessedEvent) {
 		
-		cancelDeadline();
+		//cancelDeadline();
 		
 		// Send an ApproveOrderCommand
 		ApproveOrderCommand approveOrderCommand = 
@@ -192,11 +194,11 @@ public class OrderSaga {
 	@SagaEventHandler(associationProperty="orderId")
 	public void handle(OrderApprovedEvent orderApprovedEvent) {
 		LOGGER.info("Order is approved. Order Saga is complete for orderId: " + orderApprovedEvent.getOrderId());
-	    //SagaLifecycle.end();
-		queryUpdateEmitter.emit(FindOrderQuery.class, query -> true, 
-				new OrderSummary(orderApprovedEvent.getOrderId(), 
-						orderApprovedEvent.getOrderStatus(),
-						""));
+	    // SagaLifecycle.end();
+		// queryUpdateEmitter.emit(FindOrderQuery.class, query -> true, 
+		// 		new OrderSummary(orderApprovedEvent.getOrderId(), 
+		// 				orderApprovedEvent.getOrderStatus(),
+		// 				""));
 	}
 
 	//@SagaEventHandler(associationProperty="orderId")
