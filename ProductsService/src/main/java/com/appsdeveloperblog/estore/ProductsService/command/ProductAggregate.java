@@ -48,7 +48,7 @@ public class ProductAggregate {
 		AggregateLifecycle.apply(productCreatedEvent);
 	}
 	
-	//@CommandHandler
+	@CommandHandler
 	public void handle(ReserveProductCommand reserveProductCommand) {
 		
 		if(quantity < reserveProductCommand.getQuantity()) {
@@ -98,7 +98,7 @@ public class ProductAggregate {
 	}
 	
 	
-	//@EventSourcingHandler
+	@EventSourcingHandler
 	public void on(ProductReservedEvent productReservedEvent) {
 		this.quantity -= productReservedEvent.getQuantity();
 	}

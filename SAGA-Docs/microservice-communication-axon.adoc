@@ -1,0 +1,99 @@
+= Microservice Communication via Axon Server
+
+== Understanding Cross-Microservice Communication in CQRS-SAGA Architecture
+
+=== Current Architecture Overview
+
+Your understanding is correct - the sender (OrderService) and receiver (ProductService) communicate via a message bus, typically orchestrated by the Axon Framework, which utilizes Axon Server as a message router and event store.
+
+=== How They Link to the Same Bus
+
+==== Configuration
+Both services are configured to use Axon Server for messaging. In their application configurations, they specify the Axon Server's connection details, allowing them to publish and listen to messages on the same bus.
+
+==== Command and Event Handling
+When the OrderService sends a command (such as ReserveProductCommand), that command is dispatched to the Axon Server. The ProductService must have an appropriate command handler defined (marked with @CommandHandler) to process the command.
+
+==== Location Transparency
+The microservices do not need to be aware of each other's locations; they communicate through the bus, which abstracts these details. This concept aligns with the principle of location transparency, where microservices operate independently.
+
+==== Event Dispatching
+Once the command is handled and an event is published (e.g., ProductReservedEvent), this event is also sent to the Axon Server. Any microservices that have registered with Axon Server to listen for this specific event will automatically receive it.
+
+=== The Missing Piece: Axon Server Configuration
+
+==== Current State Analysis
+* OrdersService has `axon.axonserver.token=123abc` but no server URL
+* ProductsService has no Axon server configuration  
+* Both services are using Eureka for service discovery
+
+==== Required Configuration
+
+You need to add this to both `application.properties` files:
+
+[source,properties]
+----
+# For both OrdersService and ProductsService
+axon.axonserver.servers=localhost:8124
+axon.axonserver.token=123abc
+----
+
+=== Communication Flow Diagram
+
+[source,ascii]
+----
+OrdersService → Axon Server → ProductService
+     ↑              ↓              ↓
+  Command Bus  ←  Event Bus  ←  Event Handler
+----
+
+=== Step-by-Step Communication Process
+
+. **OrdersService** sends `ReserveProductCommand` via CommandGateway
+. **Axon Server** receives the command and routes it to the appropriate handler
+. **ProductsService** has the `@CommandHandler` method that processes the command
+. **ProductsService** publishes `ProductReservedEvent`
+. **Axon Server** distributes the event to all interested subscribers  
+. **OrdersService** receives the event via its `@SagaEventHandler`
+
+=== Why This Works Across Microservices
+
+==== Location Transparency
+Neither service needs to know the other's network location - they only know about Axon Server.
+
+==== Shared Message Bus
+All commands and events flow through the centralized Axon Server, which acts as the message broker.
+
+==== Service Discovery Separation
+While Eureka handles HTTP service discovery, Axon Server handles command/event message routing.
+
+=== Key Insight
+
+**Axon Server is the central hub** that makes cross-microservice communication possible. Without proper Axon Server configuration, each service would only handle its own local commands and events.
+
+=== Code Examples
+
+==== Command Handler in ProductService
+[source,java]
+----
+@CommandHandler
+public void handle(ReserveProductCommand reserveProductCommand) {
+    if(quantity < reserveProductCommand.getQuantity()) {
+        // Handle insufficient quantity
+    }
+    // Process reservation and apply event
+}
+----
+
+==== Saga Event Handler in OrderService  
+[source,java]
+----
+@SagaEventHandler(associationProperty="orderId")
+public void handle(ProductReservedEvent productReservedEvent) {
+    // Process payment and continue saga
+}
+----
+
+=== Summary
+
+By utilizing Axon Server for both command and event dispatching, both the sender and the receiver can seamlessly communicate over the same bus without needing direct knowledge of each other's implementations. This setup promotes a scalable and loosely coupled architecture.

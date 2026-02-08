@@ -81,10 +81,10 @@ public class OrderSaga {
 					CommandResultMessage<? extends Object> commandResultMessage) {
 				   if(commandResultMessage.isExceptional()) {
 					   // Start a compensating transaction
-						// RejectOrderCommand rejectOrderCommand = new RejectOrderCommand(orderCreatedEvent.getOrderId(),
-						// 		commandResultMessage.exceptionResult().getMessage());
+						RejectOrderCommand rejectOrderCommand = new RejectOrderCommand(orderCreatedEvent.getOrderId(),
+								commandResultMessage.exceptionResult().getMessage());
 						
-						// commandGateway.send(rejectOrderCommand);
+						commandGateway.send(rejectOrderCommand);
 				   }
 				
 			}
@@ -100,54 +100,54 @@ public class OrderSaga {
         LOGGER.info("ProductReserveddEvent is called for productId: "+ productReservedEvent.getProductId() + 
         		" and orderId: " + productReservedEvent.getOrderId());
         
-    //     FetchUserPaymentDetailsQuery fetchUserPaymentDetailsQuery = 
-    //     		new FetchUserPaymentDetailsQuery(productReservedEvent.getUserId());
+        FetchUserPaymentDetailsQuery fetchUserPaymentDetailsQuery = 
+        		new FetchUserPaymentDetailsQuery(productReservedEvent.getUserId());
         
-    //     User userPaymentDetails = null;
+        User userPaymentDetails = null;
         
-    //     try {
-    //     	userPaymentDetails = queryGateway.query(fetchUserPaymentDetailsQuery, ResponseTypes.instanceOf(User.class)).join();
-    //     } catch(Exception ex) {
-    //     	LOGGER.error(ex.getMessage());
+        try {
+        	userPaymentDetails = queryGateway.query(fetchUserPaymentDetailsQuery, ResponseTypes.instanceOf(User.class)).join();
+        } catch(Exception ex) {
+        	LOGGER.error(ex.getMessage());
         	
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent,ex.getMessage());
-    //     	return;
-    //     }
+        	// Start compensating transaction
+        	cancelProductReservation(productReservedEvent,ex.getMessage());
+        	return;
+        }
         
-    //     if(userPaymentDetails == null) {
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent,"Could not fetch user payment details");
-    //     	return;
-    //     }
+        if(userPaymentDetails == null) {
+        	// Start compensating transaction
+        	cancelProductReservation(productReservedEvent,"Could not fetch user payment details");
+        	return;
+        }
         
-    //     LOGGER.info("Successfully fetched user payment details for user " + userPaymentDetails.getFirstName());
+        LOGGER.info("Successfully fetched user payment details for user " + userPaymentDetails.getFirstName());
         
         
-    //    scheduleId =  deadlineManager.schedule(Duration.of(120, ChronoUnit.SECONDS),
-    //     		PAYMENT_PROCESSING_TIMEOUT_DEADLINE, productReservedEvent);
+       scheduleId =  deadlineManager.schedule(Duration.of(120, ChronoUnit.SECONDS),
+        		PAYMENT_PROCESSING_TIMEOUT_DEADLINE, productReservedEvent);
    
-    //     ProcessPaymentCommand proccessPaymentCommand = ProcessPaymentCommand.builder()
-    //     		.orderId(productReservedEvent.getOrderId())
-    //     		.paymentDetails(userPaymentDetails.getPaymentDetails())
-    //     		.paymentId(UUID.randomUUID().toString())
-    //     		.build();
+        ProcessPaymentCommand proccessPaymentCommand = ProcessPaymentCommand.builder()
+        		.orderId(productReservedEvent.getOrderId())
+        		.paymentDetails(userPaymentDetails.getPaymentDetails())
+        		.paymentId(UUID.randomUUID().toString())
+        		.build();
         
-    //     String result = null;
-    //     try {
-    //     result = commandGateway.sendAndWait(proccessPaymentCommand);
-    //     } catch(Exception ex) {
-    //     	LOGGER.error(ex.getMessage());
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent,ex.getMessage());
-    //     	return;
-    //     }
+        String result = null;
+        try {
+        result = commandGateway.sendAndWait(proccessPaymentCommand);
+        } catch(Exception ex) {
+        	LOGGER.error(ex.getMessage());
+        	// Start compensating transaction
+        	cancelProductReservation(productReservedEvent,ex.getMessage());
+        	return;
+        }
         
-    //     if(result == null) {
-    //     	LOGGER.info("The ProcessPaymentCommand resulted in NULL. Initiating a compensating transaction");
-    //     	// Start compensating transaction
-    //     	cancelProductReservation(productReservedEvent, "Could not proccess user payment with provided payment details"); 
-    //     }
+        if(result == null) {
+        	LOGGER.info("The ProcessPaymentCommand resulted in NULL. Initiating a compensating transaction");
+        	// Start compensating transaction
+        	cancelProductReservation(productReservedEvent, "Could not proccess user payment with provided payment details"); 
+        }
  
 	}
 	
@@ -169,7 +169,7 @@ public class OrderSaga {
 	}
 	
 	
-	//@SagaEventHandler(associationProperty="orderId")
+	@SagaEventHandler(associationProperty="orderId")
 	public void handle(PaymentProcessedEvent paymentProcessedEvent) {
 		
 		cancelDeadline();
@@ -199,7 +199,7 @@ public class OrderSaga {
 						""));
 	}
 
-	//@SagaEventHandler(associationProperty="orderId")
+	@SagaEventHandler(associationProperty="orderId")
 	public void handle(ProductReservationCancelledEvent productReservationCancelledEvent) {
 		// Create and send a RejectOrderCommand
 		RejectOrderCommand rejectOrderCommand = new RejectOrderCommand(productReservationCancelledEvent.getOrderId(),
@@ -208,8 +208,8 @@ public class OrderSaga {
 		commandGateway.send(rejectOrderCommand);
 	}
 	
-	//@EndSaga
-	//@SagaEventHandler(associationProperty="orderId")
+	@EndSaga
+	@SagaEventHandler(associationProperty="orderId")
 	public void handle(OrderRejectedEvent orderRejectedEvent) {
 		LOGGER.info("Successfully rejected order with id " + orderRejectedEvent.getOrderId());
 		
@@ -219,7 +219,7 @@ public class OrderSaga {
 						orderRejectedEvent.getReason()));
 	}
 	
-	//@DeadlineHandler(deadlineName=PAYMENT_PROCESSING_TIMEOUT_DEADLINE)
+	@DeadlineHandler(deadlineName=PAYMENT_PROCESSING_TIMEOUT_DEADLINE)
 	public void handlePaymentDeadline(ProductReservedEvent productReservedEvent) {
 		LOGGER.info("Payment processing deadline took place. Sending a compensating command to cancel the product reservation");
 		cancelProductReservation(productReservedEvent, "Payment timeout");

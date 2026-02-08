@@ -165,3 +165,29 @@ EventHandler → DatabaseException → ProductsServiceEventsErrorHandler → Ret
 **HTTP Error** → **Command Fails** → **Validation Error** → **Business Error** → **Data Error**
 
 Each layer has appropriate error handling with minimal rollback complexity due to event sourcing design.
+
+
+##############################################
+
+*Order*
+
+* Create Product
+* Create Order for above Product
+** It is reserved
+* You can create multiple orders for same product. It will have different orderId
+
+---
+
+The sender (OrderService) and receiver (ProductService) communicate via a message bus, typically orchestrated by the Axon Framework, which utilizes Axon Server as a message router and event store.
+
+Here’s how they link to the same bus:
+
+* Configuration: Both services are configured to use Axon Server for messaging. In their application configurations, they specify the Axon Server's connection details, allowing them to publish and listen to messages on the same bus.
+
+* Command and Event Handling: When the OrderService sends a command (such as ReserveProductCommand), that command is dispatched to the Axon Server. The ProductService must have an appropriate command handler defined (marked with @CommandHandler) to process the command.
+
+* Location Transparency: The microservices do not need to be aware of each other's locations; they communicate through the bus, which abstracts these details. This concept aligns with the principle of location transparency, where microservices operate independently.
+
+* Event Dispatching: Once the command is handled and an event is published (e.g., ProductReservedEvent), this event is also sent to the Axon Server. Any microservices that have registered with Axon Server to listen for this specific event will automatically receive it.
+
+By utilizing Axon Server for both command and event dispatching, both the sender and the receiver can seamlessly communicate over the same bus without needing direct knowledge of each other's implementations. This setup promotes a scalable and loosely coupled architecture.

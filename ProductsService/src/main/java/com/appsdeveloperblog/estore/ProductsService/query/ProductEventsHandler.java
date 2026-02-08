@@ -53,7 +53,7 @@ public class ProductEventsHandler {
 
 	}
 	
-	//@EventHandler
+	@EventHandler
 	public void on(ProductReservedEvent productReservedEvent) {
 		ProductEntity productEntity = productsRepository.findByProductId(productReservedEvent.getProductId());
 		
