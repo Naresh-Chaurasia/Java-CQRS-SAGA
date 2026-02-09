@@ -35,7 +35,7 @@ public class OrdersCommandController {
 	}
 
 	@PostMapping
-	public OrderSummary createOrder(@Valid @RequestBody OrderCreateRest order) {
+	public String createOrder(@Valid @RequestBody OrderCreateRest order) {
 
 		String userId = "27b95829-4f3f-4ddf-8983-151ba010e35b";
 		String orderId = UUID.randomUUID().toString();
@@ -44,17 +44,8 @@ public class OrdersCommandController {
 				.productId(order.getProductId()).userId(userId).quantity(order.getQuantity()).orderId(orderId)
 				.orderStatus(OrderStatus.CREATED).build();
 
-		SubscriptionQueryResult<OrderSummary, OrderSummary> queryResult = queryGateway.subscriptionQuery(
-				new FindOrderQuery(orderId), ResponseTypes.instanceOf(OrderSummary.class),
-				ResponseTypes.instanceOf(OrderSummary.class));
-
-		try {
-			commandGateway.sendAndWait(createOrderCommand);
-			return queryResult.updates().blockFirst();
-		} finally {
-			queryResult.close();
-		}
-
+		commandGateway.send(createOrderCommand);
+		return orderId;
 	}
 
 }

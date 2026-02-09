@@ -66,7 +66,7 @@ public class ProductAggregate {
 		
 	}
 	
-	//@CommandHandler
+	@CommandHandler
 	public void handle(CancelProductReservationCommand cancelProductReservationCommand) {
 		
 		ProductReservationCancelledEvent productReservationCancelledEvent = 
@@ -83,7 +83,7 @@ public class ProductAggregate {
 	}
 	
 	
-	//@EventSourcingHandler
+	@EventSourcingHandler
 	public void on(ProductReservationCancelledEvent productReservationCancelledEvent) {
 		this.quantity += productReservationCancelledEvent.getQuantity();
 	}

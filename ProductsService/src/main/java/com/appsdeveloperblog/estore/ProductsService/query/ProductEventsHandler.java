@@ -70,7 +70,7 @@ public class ProductEventsHandler {
 				" and orderId: " + productReservedEvent.getOrderId());
 	}
 	
-	//@EventHandler
+	@EventHandler
 	public void on(ProductReservationCancelledEvent productReservationCancelledEvent) {
 		ProductEntity currentlyStoredProduct =  productsRepository.findByProductId(productReservationCancelledEvent.getProductId());
 	
