@@ -1,0 +1,135 @@
+= Authorization Service – High-Level Documentation
+:toc: right
+:toclevels: 5
+:sectnums:5
+:sectnumlevel: 5
+
+== Overview
+
+The *Authorization Service* is a Spring Boot–based microservice responsible for evaluating payment authorization requests.
+It acts as the **first service in the payment processing pipeline**, applying business rules and risk checks before downstream processing.
+
+The service is built using the *CQRS and Event Sourcing* patterns, implemented with the *Axon Framework*.
+
+== Application Components
+
+=== AuthorizationServiceApplication.java
+
+*Main Application Class*
+
+* Purpose
+** Spring Boot entry point for the Authorization microservice.
+
+* Role
+** First service in the payment processing pipeline.
+
+* Integration
+** Axon Framework for CQRS and Event Sourcing
+** Axon Server for command and event routing
+
+* Configuration
+** Runs on port *8081*
+** Axon Server at *localhost:8124*
+** H2 in-memory database for persistence
+
+##############################################
+
+=== AuthorizationRulesEngine.java
+
+*Business Logic Service*
+
+* Purpose
+** Evaluates payment authorization rules and performs risk assessment.
+
+* Features
+** Amount limit validation
+** Risk scoring
+*** Merchant validation
+*** Currency validation
+
+* Output
+** Produces a structured *AuthorizationResult* with detailed decision feedback.
+
+* Error Codes
+** AMOUNT_EXCEEDS_LIMIT
+** HIGH_RISK
+** INVALID_MERCHANT
+** INVALID_CURRENCY
+
+##############################################
+
+=== AuthorizationResult.java
+
+*Result Data Object*
+
+* Purpose
+** Encapsulates the outcome of an authorization decision.
+
+* Contains
+** Approval or rejection status
+** Calculated risk score
+** Detailed rejection reasons (if any)
+
+* Usage
+** Enables downstream services to handle authorization outcomes consistently and reliably.
+
+##############################################
+
+=== AuthorizationEventHandler.java
+
+*Event Handler*
+
+* Purpose
+** Orchestrates the payment authorization workflow using events.
+
+* Integration
+** Receives domain events
+** Delegates decision-making to *AuthorizationRulesEngine*
+** Publishes authorization result events
+
+* Error Handling
+** Comprehensive exception handling
+** Audit-focused logging for traceability
+
+* Architecture Role
+** Critical component that bridges authorization logic with downstream services.
+
+== Architecture Integration
+
+=== Event Flow
+
+## [source]
+
+PaymentInitiatedEvent
+↓
+AuthorizationRulesEngine
+↓
+PaymentAuthorizedEvent / PaymentRejectedEvent
+---------------------------------------------
+
+=== Downstream Services
+
+* *SettlementService*
+  Triggered when payment is approved.
+
+* *OrderService*
+  Triggered when payment is rejected.
+
+=== CQRS Pattern
+
+* Clear separation of commands and events
+* Axon Framework used for command handling, event publishing, and event handling
+* Scales cleanly with distributed microservices
+
+=== Audit Trail
+
+* Complete logging of authorization decisions
+* Supports compliance, debugging, and operational monitoring
+
+---
+
+If you want, next we can:
+
+* Convert this into **module-level JavaDoc**
+* Create a **README.adoc** for the repo
+* Or align it with **DDD terminology** (Aggregate, Policy, Domain Event)

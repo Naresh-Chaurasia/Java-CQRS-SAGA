@@ -1,0 +1,1117 @@
+= Payment Processing Platform Implementation Guide
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== Overview
+
+This guide provides a step-by-step implementation plan for building a Payment Processing Platform using event-driven architecture with Java, Spring Boot, and Axon Framework.
+
+== Day 1: Foundation & Setup
+
+=== 1.1 Project Structure Setup
+
+[source,bash]
+----
+mkdir -p payment-platform/{authorization-service,settlement-service,notification-service,reconciliation-service,api-gateway,frontend}
+cd payment-platform
+----
+
+=== 1.2 Parent POM Creation
+
+Create parent `pom.xml` with shared dependencies:
+
+[source,xml]
+----
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <groupId>com.payment.platform</groupId>
+    <artifactId>payment-platform</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    
+    <properties>
+        <java.version>17</java.version>
+        <spring-boot.version>3.1.0</spring-boot.version>
+        <axon.version>4.7.4</axon.version>
+        <kafka.version>3.4.0</kafka.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+    </properties>
+    
+    <modules>
+        <module>authorization-service</module>
+        <module>settlement-service</module>
+        <module>notification-service</module>
+        <module>reconciliation-service</module>
+        <module>api-gateway</module>
+    </modules>
+    
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.axonframework</groupId>
+                <artifactId>axon-bom</artifactId>
+                <version>${axon.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
+----
+
+=== 1.3 Base Event Classes
+
+Create shared events in `core-events` module:
+
+[source,java]
+----
+// PaymentEvent.java
+package com.payment.platform.core.events;
+
+import java.time.LocalDateTime;
+import lombok.Data;
+
+@Data
+public abstract class PaymentEvent {
+    protected String paymentId;
+    protected String orderId;
+    protected LocalDateTime timestamp;
+    protected String correlationId;
+}
+
+// PaymentInitiatedEvent.java
+package com.payment.platform.core.events;
+
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class PaymentInitiatedEvent extends PaymentEvent {
+    private String amount;
+    private String currency;
+    private String userId;
+    private String merchantId;
+    private String paymentMethod;
+}
+
+// PaymentAuthorizedEvent.java
+package com.payment.platform.core.events;
+
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class PaymentAuthorizedEvent extends PaymentEvent {
+    private String authorizationCode;
+    private String riskScore;
+}
+
+// PaymentRejectedEvent.java
+package com.payment.platform.core.events;
+
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class PaymentRejectedEvent extends PaymentEvent {
+    private String rejectionReason;
+    private String errorCode;
+}
+
+// PaymentSettledEvent.java
+package com.payment.platform.core.events;
+
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class PaymentSettledEvent extends PaymentEvent {
+    private String settlementId;
+    private LocalDateTime settlementDate;
+}
+----
+
+=== 1.4 Core Domain Models
+
+[source,java]
+----
+// Payment.java
+package com.payment.platform.core.model;
+
+import java.time.LocalDateTime;
+import lombok.Data;
+
+@Data
+public class Payment {
+    private String paymentId;
+    private String orderId;
+    private String amount;
+    private String currency;
+    private String userId;
+    private String merchantId;
+    private PaymentStatus status;
+    private String paymentMethod;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+}
+
+enum PaymentStatus {
+    INITIATED, AUTHORIZED, REJECTED, SETTLED, FAILED
+}
+----
+
+== Day 2: Payment Initiation Service
+
+=== 2.1 Service Setup
+
+Create `payment-initiation-service` with basic Spring Boot structure.
+
+=== 2.2 Payment Controller
+
+[source,java]
+----
+@RestController
+@RequestMapping("/api/payments")
+@Validated
+public class PaymentController {
+    
+    @Autowired
+    private CommandGateway commandGateway;
+    
+    @PostMapping("/initiate")
+    public ResponseEntity<PaymentInitiationResponse> initiatePayment(
+            @Valid @RequestBody PaymentInitiationRequest request) {
+        
+        String paymentId = UUID.randomUUID().toString();
+        String correlationId = UUID.randomUUID().toString();
+        
+        InitiatePaymentCommand command = InitiatePaymentCommand.builder()
+                .paymentId(paymentId)
+                .orderId(request.getOrderId())
+                .amount(request.getAmount())
+                .currency(request.getCurrency())
+                .userId(request.getUserId())
+                .merchantId(request.getMerchantId())
+                .paymentMethod(request.getPaymentMethod())
+                .correlationId(correlationId)
+                .build();
+        
+        commandGateway.send(command);
+        
+        return ResponseEntity.accepted()
+                .body(PaymentInitiationResponse.builder()
+                        .paymentId(paymentId)
+                        .status("INITIATED")
+                        .correlationId(correlationId)
+                        .build());
+    }
+}
+----
+
+=== 2.3 Payment Command & Entity
+
+[source,java]
+----
+// InitiatePaymentCommand.java
+@Data
+@Builder
+public class InitiatePaymentCommand {
+    @NotNull
+    private String paymentId;
+    @NotNull
+    private String orderId;
+    @NotNull
+    @Positive
+    private BigDecimal amount;
+    @NotBlank
+    private String currency;
+    @NotNull
+    private String userId;
+    @NotNull
+    private String merchantId;
+    @NotBlank
+    private String paymentMethod;
+    @NotNull
+    private String correlationId;
+}
+
+// PaymentAggregate.java
+@Aggregate
+public class PaymentAggregate {
+    
+    @AggregateIdentifier
+    private String paymentId;
+    private PaymentStatus status;
+    private String orderId;
+    private BigDecimal amount;
+    private String currency;
+    private String userId;
+    private String merchantId;
+    private String paymentMethod;
+    
+    public PaymentAggregate() {}
+    
+    @CommandHandler
+    public PaymentAggregate(InitiatePaymentCommand command) {
+        // Validate idempotency
+        if (command.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+        
+        PaymentInitiatedEvent event = PaymentInitiatedEvent.builder()
+                .paymentId(command.getPaymentId())
+                .orderId(command.getOrderId())
+                .amount(command.getAmount().toString())
+                .currency(command.getCurrency())
+                .userId(command.getUserId())
+                .merchantId(command.getMerchantId())
+                .paymentMethod(command.getPaymentMethod())
+                .correlationId(command.getCorrelationId())
+                .timestamp(LocalDateTime.now())
+                .build();
+        
+        AggregateLifecycle.apply(event);
+    }
+    
+    @EventSourcingHandler
+    protected void on(PaymentInitiatedEvent event) {
+        this.paymentId = event.getPaymentId();
+        this.orderId = event.getOrderId();
+        this.amount = new BigDecimal(event.getAmount());
+        this.currency = event.getCurrency();
+        this.userId = event.getUserId();
+        this.merchantId = event.getMerchantId();
+        this.paymentMethod = event.getPaymentMethod();
+        this.status = PaymentStatus.INITIATED;
+    }
+}
+----
+
+=== 2.4 Payment Event Handler
+
+[source,java]
+----
+@Component
+public class PaymentEventHandler {
+    
+    @Autowired
+    private PaymentRepository paymentRepository;
+    
+    @EventHandler
+    public void on(PaymentInitiatedEvent event) {
+        Payment payment = Payment.builder()
+                .paymentId(event.getPaymentId())
+                .orderId(event.getOrderId())
+                .amount(event.getAmount())
+                .currency(event.getCurrency())
+                .userId(event.getUserId())
+                .merchantId(event.getMerchantId())
+                .paymentMethod(event.getPaymentMethod())
+                .status(PaymentStatus.INITIATED)
+                .createdAt(event.getTimestamp())
+                .updatedAt(event.getTimestamp())
+                .build();
+        
+        paymentRepository.save(payment);
+    }
+}
+----
+
+== Day 3: Authorization Service
+
+=== 3.1 Service Setup
+
+Create `authorization-service` with event handling capabilities.
+
+=== 3.2 Authorization Rules Engine
+
+[source,java]
+----
+@Service
+public class AuthorizationRulesEngine {
+    
+    public AuthorizationResult evaluate(PaymentInitiatedEvent event) {
+        AuthorizationResult result = new AuthorizationResult();
+        
+        // Rule 1: Amount limit check
+        BigDecimal amount = new BigDecimal(event.getAmount());
+        if (amount.compareTo(new BigDecimal("10000")) > 0) {
+            result.addRejection("AMOUNT_EXCEEDS_LIMIT", "Transaction amount exceeds daily limit");
+        }
+        
+        // Rule 2: Risk scoring
+        int riskScore = calculateRiskScore(event);
+        result.setRiskScore(String.valueOf(riskScore));
+        
+        if (riskScore > 80) {
+            result.addRejection("HIGH_RISK", "Transaction flagged as high risk");
+        }
+        
+        // Rule 3: Merchant validation
+        if (!isValidMerchant(event.getMerchantId())) {
+            result.addRejection("INVALID_MERCHANT", "Merchant not authorized");
+        }
+        
+        return result;
+    }
+    
+    private int calculateRiskScore(PaymentInitiatedEvent event) {
+        int score = 0;
+        
+        // Simple risk calculation logic
+        BigDecimal amount = new BigDecimal(event.getAmount());
+        if (amount.compareTo(new BigDecimal("5000")) > 0) score += 30;
+        if (amount.compareTo(new BigDecimal("1000")) > 0) score += 10;
+        
+        // Add more risk factors based on user history, location, etc.
+        return Math.min(score, 100);
+    }
+    
+    private boolean isValidMerchant(String merchantId) {
+        // In real implementation, check against merchant database
+        return merchantId != null && !merchantId.isEmpty();
+    }
+}
+
+@Data
+public class AuthorizationResult {
+    private boolean approved = true;
+    private String riskScore;
+    private List<String> rejectionReasons = new ArrayList<>();
+    
+    public void addRejection(String code, String reason) {
+        approved = false;
+        rejectionReasons.add(code + ": " + reason);
+    }
+}
+----
+
+=== 3.3 Authorization Event Handler
+
+[source,java]
+----
+@Component
+public class AuthorizationEventHandler {
+    
+    @Autowired
+    private AuthorizationRulesEngine rulesEngine;
+    
+    @Autowired
+    private CommandGateway commandGateway;
+    
+    @EventHandler
+    public void on(PaymentInitiatedEvent event) {
+        log.info("Processing payment authorization for paymentId: {}", event.getPaymentId());
+        
+        try {
+            AuthorizationResult result = rulesEngine.evaluate(event);
+            
+            if (result.isApproved()) {
+                PaymentAuthorizedEvent authorizedEvent = PaymentAuthorizedEvent.builder()
+                        .paymentId(event.getPaymentId())
+                        .orderId(event.getOrderId())
+                        .authorizationCode(generateAuthCode())
+                        .riskScore(result.getRiskScore())
+                        .correlationId(event.getCorrelationId())
+                        .timestamp(LocalDateTime.now())
+                        .build();
+                
+                commandGateway.send(new PublishEventCommand(authorizedEvent));
+                
+            } else {
+                PaymentRejectedEvent rejectedEvent = PaymentRejectedEvent.builder()
+                        .paymentId(event.getPaymentId())
+                        .orderId(event.getOrderId())
+                        .rejectionReason(String.join("; ", result.getRejectionReasons()))
+                        .errorCode("AUTH_FAILED")
+                        .correlationId(event.getCorrelationId())
+                        .timestamp(LocalDateTime.now())
+                        .build();
+                
+                commandGateway.send(new PublishEventCommand(rejectedEvent));
+            }
+            
+        } catch (Exception e) {
+            log.error("Authorization failed for paymentId: {}", event.getPaymentId(), e);
+            
+            PaymentRejectedEvent rejectedEvent = PaymentRejectedEvent.builder()
+                    .paymentId(event.getPaymentId())
+                    .orderId(event.getOrderId())
+                    .rejectionReason("System error during authorization")
+                    .errorCode("SYSTEM_ERROR")
+                    .correlationId(event.getCorrelationId())
+                    .timestamp(LocalDateTime.now())
+                    .build();
+            
+            commandGateway.send(new PublishEventCommand(rejectedEvent));
+        }
+    }
+    
+    private String generateAuthCode() {
+        return "AUTH_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+}
+----
+
+== Day 4: Settlement & Notification Services
+
+=== 4.1 Settlement Service
+
+[source,java]
+----
+// SettlementEventHandler.java
+@Component
+public class SettlementEventHandler {
+    
+    @Autowired
+    private LedgerService ledgerService;
+    
+    @Autowired
+    private CommandGateway commandGateway;
+    
+    @EventHandler
+    public void on(PaymentAuthorizedEvent event) {
+        log.info("Processing settlement for authorized payment: {}", event.getPaymentId());
+        
+        try {
+            // Create ledger entry
+            LedgerEntry entry = LedgerEntry.builder()
+                    .settlementId(UUID.randomUUID().toString())
+                    .paymentId(event.getPaymentId())
+                    .orderId(event.getOrderId())
+                    .amount(fetchPaymentAmount(event.getPaymentId()))
+                    .currency(fetchPaymentCurrency(event.getPaymentId()))
+                    .status(SettlementStatus.PENDING)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            
+            ledgerService.createEntry(entry);
+            
+            // Simulate settlement processing
+            boolean settlementSuccess = processSettlement(entry);
+            
+            if (settlementSuccess) {
+                entry.setStatus(SettlementStatus.COMPLETED);
+                entry.setSettledAt(LocalDateTime.now());
+                ledgerService.updateEntry(entry);
+                
+                PaymentSettledEvent settledEvent = PaymentSettledEvent.builder()
+                        .paymentId(event.getPaymentId())
+                        .orderId(event.getOrderId())
+                        .settlementId(entry.getSettlementId())
+                        .settlementDate(entry.getSettledAt())
+                        .correlationId(event.getCorrelationId())
+                        .timestamp(LocalDateTime.now())
+                        .build();
+                
+                commandGateway.send(new PublishEventCommand(settledEvent));
+                
+            } else {
+                // Handle settlement failure
+                handleSettlementFailure(event.getPaymentId(), "Settlement processing failed");
+            }
+            
+        } catch (Exception e) {
+            log.error("Settlement failed for paymentId: {}", event.getPaymentId(), e);
+            handleSettlementFailure(event.getPaymentId(), "System error during settlement");
+        }
+    }
+    
+    private boolean processSettlement(LedgerEntry entry) {
+        // Simulate settlement processing with external payment processor
+        // In real implementation, this would integrate with banking systems
+        return true; // Simplified for demo
+    }
+    
+    private void handleSettlementFailure(String paymentId, String reason) {
+        // Emit settlement failed event or retry logic
+        log.error("Settlement failed for paymentId: {}, reason: {}", paymentId, reason);
+    }
+}
+
+// LedgerService.java
+@Service
+public class LedgerService {
+    
+    @Autowired
+    private LedgerRepository ledgerRepository;
+    
+    public LedgerEntry createEntry(LedgerEntry entry) {
+        return ledgerRepository.save(entry);
+    }
+    
+    public LedgerEntry updateEntry(LedgerEntry entry) {
+        return ledgerRepository.save(entry);
+    }
+    
+    public List<LedgerEntry> findByPaymentId(String paymentId) {
+        return ledgerRepository.findByPaymentId(paymentId);
+    }
+}
+----
+
+=== 4.2 Notification Service
+
+[source,java]
+----
+@Component
+public class NotificationEventHandler {
+    
+    @Autowired
+    private NotificationService notificationService;
+    
+    @EventHandler
+    public void on(PaymentSettledEvent event) {
+        log.info("Sending settlement notification for payment: {}", event.getPaymentId());
+        
+        NotificationMessage message = NotificationMessage.builder()
+                .type(NotificationType.PAYMENT_SETTLED)
+                .recipient(fetchUserEmail(event.getPaymentId()))
+                .subject("Payment Settled Successfully")
+                .content(buildSettlementContent(event))
+                .correlationId(event.getCorrelationId())
+                .timestamp(LocalDateTime.now())
+                .build();
+        
+        notificationService.sendNotification(message);
+    }
+    
+    @EventHandler
+    public void on(PaymentRejectedEvent event) {
+        log.info("Sending rejection notification for payment: {}", event.getPaymentId());
+        
+        NotificationMessage message = NotificationMessage.builder()
+                .type(NotificationType.PAYMENT_REJECTED)
+                .recipient(fetchUserEmail(event.getPaymentId()))
+                .subject("Payment Rejected")
+                .content(buildRejectionContent(event))
+                .correlationId(event.getCorrelationId())
+                .timestamp(LocalDateTime.now())
+                .build();
+        
+        notificationService.sendNotification(message);
+    }
+    
+    private String buildSettlementContent(PaymentSettledEvent event) {
+        return String.format(
+            "Your payment %s has been successfully settled. Settlement ID: %s",
+            event.getPaymentId(), event.getSettlementId()
+        );
+    }
+    
+    private String buildRejectionContent(PaymentRejectedEvent event) {
+        return String.format(
+            "Your payment %s has been rejected. Reason: %s",
+            event.getPaymentId(), event.getRejectionReason()
+        );
+    }
+    
+    private String fetchUserEmail(String paymentId) {
+        // In real implementation, fetch from user service
+        return "user@example.com";
+    }
+}
+
+// NotificationService.java
+@Service
+public class NotificationService {
+    
+    @Autowired
+    private NotificationRepository notificationRepository;
+    
+    public void sendNotification(NotificationMessage message) {
+        try {
+            // Save notification record
+            NotificationRecord record = NotificationRecord.builder()
+                    .id(UUID.randomUUID().toString())
+                    .type(message.getType())
+                    .recipient(message.getRecipient())
+                    .subject(message.getSubject())
+                    .content(message.getContent())
+                    .status(NotificationStatus.SENT)
+                    .sentAt(LocalDateTime.now())
+                    .correlationId(message.getCorrelationId())
+                    .build();
+            
+            notificationRepository.save(record);
+            
+            // Send notification (email, SMS, etc.)
+            // For demo, just log to console
+            log.info("NOTIFICATION SENT: To={}, Subject={}, Content={}", 
+                    message.getRecipient(), message.getSubject(), message.getContent());
+            
+        } catch (Exception e) {
+            log.error("Failed to send notification", e);
+            throw new NotificationException("Failed to send notification", e);
+        }
+    }
+}
+----
+
+== Day 5: Reconciliation, Security & Demo
+
+=== 5.1 Reconciliation Service
+
+[source,java]
+----
+@Service
+public class ReconciliationService {
+    
+    @Autowired
+    private PaymentRepository paymentRepository;
+    
+    @Autowired
+    private LedgerRepository ledgerRepository;
+    
+    @Scheduled(cron = "0 0 2 * * ?") // Run daily at 2 AM
+    public void performDailyReconciliation() {
+        log.info("Starting daily reconciliation process");
+        
+        LocalDateTime yesterday = LocalDateTime.now().minusDays(1);
+        LocalDateTime startOfDay = yesterday.toLocalDate().atStartOfDay();
+        LocalDateTime endOfDay = yesterday.toLocalDate().atTime(23, 59, 59);
+        
+        List<Payment> payments = paymentRepository.findByStatusAndCreatedAtBetween(
+                PaymentStatus.SETTLED, startOfDay, endOfDay);
+        
+        List<LedgerEntry> ledgerEntries = ledgerRepository.findByCreatedAtBetween(startOfDay, endOfDay);
+        
+        ReconciliationReport report = generateReconciliationReport(payments, ledgerEntries);
+        
+        logReconciliationResults(report);
+        
+        // Handle mismatches
+        handleMismatches(report.getMismatches());
+    }
+    
+    private ReconciliationReport generateReconciliationReport(
+            List<Payment> payments, List<LedgerEntry> ledgerEntries) {
+        
+        Map<String, Payment> paymentMap = payments.stream()
+                .collect(Collectors.toMap(Payment::getPaymentId, Function.identity()));
+        
+        Map<String, LedgerEntry> ledgerMap = ledgerEntries.stream()
+                .collect(Collectors.toMap(LedgerEntry::getPaymentId, Function.identity()));
+        
+        List<ReconciliationMismatch> mismatches = new ArrayList<>();
+        
+        // Check for payments without ledger entries
+        paymentMap.keySet().forEach(paymentId -> {
+            if (!ledgerMap.containsKey(paymentId)) {
+                mismatches.add(new ReconciliationMismatch(
+                        paymentId, "MISSING_LEDGER_ENTRY", 
+                        "Payment settled but no ledger entry found"
+                ));
+            }
+        });
+        
+        // Check for ledger entries without payments
+        ledgerMap.keySet().forEach(paymentId -> {
+            if (!paymentMap.containsKey(paymentId)) {
+                mismatches.add(new ReconciliationMismatch(
+                        paymentId, "MISSING_PAYMENT_RECORD", 
+                        "Ledger entry exists but no payment record found"
+                ));
+            }
+        });
+        
+        // Check for amount mismatches
+        paymentMap.forEach((paymentId, payment) -> {
+            LedgerEntry ledgerEntry = ledgerMap.get(paymentId);
+            if (ledgerEntry != null && !payment.getAmount().equals(ledgerEntry.getAmount())) {
+                mismatches.add(new ReconciliationMismatch(
+                        paymentId, "AMOUNT_MISMATCH", 
+                        String.format("Payment amount: %s, Ledger amount: %s", 
+                                payment.getAmount(), ledgerEntry.getAmount())
+                ));
+            }
+        });
+        
+        return ReconciliationReport.builder()
+                .reconciliationDate(LocalDateTime.now())
+                .totalPayments(payments.size())
+                .totalLedgerEntries(ledgerEntries.size())
+                .matchedCount(payments.size() - mismatches.size())
+                .mismatchCount(mismatches.size())
+                .mismatches(mismatches)
+                .build();
+    }
+    
+    private void handleMismatches(List<ReconciliationMismatch> mismatches) {
+        mismatches.forEach(mismatch -> {
+            log.warn("Reconciliation mismatch: PaymentId={}, Type={}, Details={}", 
+                    mismatch.getPaymentId(), mismatch.getType(), mismatch.getDetails());
+            
+            // In real implementation, trigger alerts, manual review processes, etc.
+        });
+    }
+}
+----
+
+=== 5.2 Security Configuration
+
+[source,java]
+----
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+    
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/payments/initiate").hasRole("USER")
+                .requestMatchers("/actuator/**").hasRole("ADMIN")
+                .anyRequest().authenticated()
+            )
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+        
+        return http.build();
+    }
+    
+    @Bean
+    public JwtDecoder jwtDecoder() {
+        return NimbusJwtDecoder.withJwkSetUri("http://localhost:8080/.well-known/jwks.json").build();
+    }
+}
+
+// Sensitive Data Masking
+@Component
+public class DataMaskingUtil {
+    
+    public String maskPaymentMethod(String paymentMethod) {
+        if (paymentMethod == null || paymentMethod.length() <= 4) {
+            return "****";
+        }
+        return paymentMethod.substring(0, 4) + "****";
+    }
+    
+    public String maskMerchantId(String merchantId) {
+        if (merchantId == null || merchantId.length() <= 6) {
+            return "******";
+        }
+        return "******" + merchantId.substring(merchantId.length() - 4);
+    }
+}
+----
+
+=== 5.3 Resilience Patterns
+
+[source,java]
+----
+@Configuration
+public class ResilienceConfig {
+    
+    @Bean
+    public RetryTemplate retryTemplate() {
+        return RetryTemplate.builder()
+                .maxAttempts(3)
+                .exponentialBackoff(1000, 2, 10000)
+                .retryOn(Exception.class)
+                .build();
+    }
+    
+    @Bean
+    public CircuitBreaker circuitBreaker() {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+                .failureRateThreshold(50)
+                .waitDurationInOpenState(Duration.ofSeconds(30))
+                .ringBufferSizeInHalfOpenState(10)
+                .ringBufferSizeInClosedState(100)
+                .build();
+        
+        return CircuitBreaker.of("paymentCircuitBreaker", config);
+    }
+}
+
+// Usage in service
+@Service
+public class ResilientPaymentService {
+    
+    @Autowired
+    private RetryTemplate retryTemplate;
+    
+    @Autowired
+    private CircuitBreaker circuitBreaker;
+    
+    public void processPaymentWithResilience(Payment payment) {
+        retryTemplate.execute(context -> {
+            return circuitBreaker.executeSupplier(() -> {
+                // External service call
+                return externalPaymentProcessor.process(payment);
+            });
+        });
+    }
+}
+----
+
+=== 5.4 Observability Setup
+
+[source,java]
+----
+// Structured Logging
+@Component
+public class LoggingAspect {
+    
+    @Around("@annotation(org.springframework.web.bind.annotation.PostMapping)")
+    public Object logPostRequests(ProceedingJoinPoint joinPoint) throws Throwable {
+        String correlationId = MDC.get("correlationId");
+        
+        log.info("API_CALL_START: method={}, args={}, correlationId={}", 
+                joinPoint.getSignature().getName(), 
+                Arrays.toString(joinPoint.getArgs()), 
+                correlationId);
+        
+        try {
+            Object result = joinPoint.proceed();
+            log.info("API_CALL_SUCCESS: method={}, correlationId={}", 
+                    joinPoint.getSignature().getName(), correlationId);
+            return result;
+        } catch (Exception e) {
+            log.error("API_CALL_ERROR: method={}, error={}, correlationId={}", 
+                    joinPoint.getSignature().getName(), e.getMessage(), correlationId);
+            throw e;
+        }
+    }
+}
+
+// Metrics
+@Component
+public class PaymentMetrics {
+    
+    private final MeterRegistry meterRegistry;
+    private final Counter paymentInitiationCounter;
+    private final Counter paymentAuthorizationCounter;
+    private final Timer paymentProcessingTimer;
+    
+    public PaymentMetrics(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+        this.paymentInitiationCounter = Counter.builder("payments.initiated")
+                .description("Number of payment initiations")
+                .register(meterRegistry);
+        this.paymentAuthorizationCounter = Counter.builder("payments.authorized")
+                .description("Number of payment authorizations")
+                .register(meterRegistry);
+        this.paymentProcessingTimer = Timer.builder("payments.processing.time")
+                .description("Payment processing time")
+                .register(meterRegistry);
+    }
+    
+    public void incrementPaymentInitiation() {
+        paymentInitiationCounter.increment();
+    }
+    
+    public void incrementPaymentAuthorization() {
+        paymentAuthorizationCounter.increment();
+    }
+    
+    public Timer.Sample startTimer() {
+        return Timer.start(meterRegistry);
+    }
+}
+----
+
+=== 5.5 Demo Scripts
+
+[source,bash]
+----
+#!/bin/bash
+# demo.sh - Payment Platform Demo Script
+
+echo "=== Payment Processing Platform Demo ==="
+
+# Start all services
+echo "Starting services..."
+docker-compose up -d
+
+# Wait for services to be ready
+echo "Waiting for services to start..."
+sleep 30
+
+# Test 1: Initiate Payment
+echo "1. Initiating payment..."
+curl -X POST http://localhost:8080/api/payments/initiate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "orderId": "ORD-001",
+    "amount": 100.00,
+    "currency": "USD",
+    "userId": "USER-001",
+    "merchantId": "MERCHANT-001",
+    "paymentMethod": "credit-card-1234"
+  }'
+
+# Test 2: Check Payment Status
+echo "2. Checking payment status..."
+curl -X GET http://localhost:8080/api/payments/PAYMENT-001 \
+  -H "Authorization: Bearer <token>"
+
+# Test 3: Trigger Reconciliation
+echo "3. Triggering reconciliation..."
+curl -X POST http://localhost:8080/api/reconciliation/trigger \
+  -H "Authorization: Bearer <token>"
+
+# Test 4: View Metrics
+echo "4. Viewing metrics..."
+curl -X GET http://localhost:8080/actuator/metrics
+
+echo "Demo completed!"
+----
+
+== Testing & Verification
+
+=== Unit Tests
+
+[source,java]
+----
+@ExtendWith(MockitoExtension.class)
+class AuthorizationRulesEngineTest {
+    
+    @Autowired
+    private AuthorizationRulesEngine rulesEngine;
+    
+    @Test
+    void testAmountLimitExceeded() {
+        PaymentInitiatedEvent event = PaymentInitiatedEvent.builder()
+                .paymentId("PAY-001")
+                .amount("15000.00") // Exceeds limit
+                .currency("USD")
+                .userId("USER-001")
+                .merchantId("MERCHANT-001")
+                .build();
+        
+        AuthorizationResult result = rulesEngine.evaluate(event);
+        
+        assertThat(result.isApproved()).isFalse();
+        assertThat(result.getRejectionReasons()).contains("AMOUNT_EXCEEDS_LIMIT");
+    }
+    
+    @Test
+    void testValidPayment() {
+        PaymentInitiatedEvent event = PaymentInitiatedEvent.builder()
+                .paymentId("PAY-002")
+                .amount("100.00")
+                .currency("USD")
+                .userId("USER-001")
+                .merchantId("MERCHANT-001")
+                .build();
+        
+        AuthorizationResult result = rulesEngine.evaluate(event);
+        
+        assertThat(result.isApproved()).isTrue();
+    }
+}
+----
+
+=== Integration Tests
+
+[source,java]
+----
+@SpringBootTest
+@TestPropertySource(properties = {
+    "axon.axonserver.servers=localhost:8124"
+})
+class PaymentIntegrationTest {
+    
+    @Autowired
+    private TestAggregate aggregate;
+    
+    @Test
+    void testPaymentFlow() {
+        // Given
+        InitiatePaymentCommand command = InitiatePaymentCommand.builder()
+                .paymentId("PAY-001")
+                .orderId("ORD-001")
+                .amount(new BigDecimal("100.00"))
+                .currency("USD")
+                .userId("USER-001")
+                .merchantId("MERCHANT-001")
+                .paymentMethod("credit-card")
+                .correlationId("COR-001")
+                .build();
+        
+        // When
+        aggregate.when(command);
+        
+        // Then
+        aggregate.expectEvents(PaymentInitiatedEvent.class);
+        aggregate.expectState(state -> {
+            PaymentAggregate payment = (PaymentAggregate) state;
+            return payment.getPaymentId().equals("PAY-001") && 
+                   payment.getStatus() == PaymentStatus.INITIATED;
+        });
+    }
+}
+----
+
+== Architecture Decisions & Trade-offs
+
+=== Why Event-Driven Architecture?
+
+*Benefits:*
+- Loose coupling between services
+- Scalability through asynchronous processing
+- Resilience through event replay capabilities
+- Audit trail through event sourcing
+
+*Trade-offs:*
+- Increased complexity in debugging
+- Eventual consistency requires careful handling
+- Additional infrastructure overhead
+
+=== Service Boundaries
+
+*Rationale:*
+- **Authorization Service**: Separate due to complex business rules and risk assessment
+- **Settlement Service**: Isolated for financial compliance and audit requirements
+- **Notification Service**: Decoupled for multiple notification channels
+- **Reconciliation Service**: Batch processing with different performance characteristics
+
+=== Error Handling Strategy
+
+*Approach:*
+- Retry with exponential backoff for transient failures
+- Circuit breaker pattern for external service calls
+- Dead letter queue for failed events
+- Compensating transactions within saga patterns
+
+== Deliverables Checklist
+
+- [ ] High-Level Architecture diagrams
+- [ ] Working Git repository
+- [ ] API documentation
+- [ ] Demo scripts
+- [ ] Test coverage report
+- [ ] Performance metrics
+- [ ] Security configuration
+- [ ] Observability setup
+- [ ] Presentation slides
+
+== Next Steps
+
+1. Set up CI/CD pipeline
+2. Add comprehensive monitoring
+3. Implement advanced security features
+4. Performance optimization
+5. Additional payment methods support

@@ -1,0 +1,293 @@
+= Payment Processing Platform Implementation Summary
+:toc: right
+:toclevels: 5
+:sectnums: 5
+:sectnumlevel: 5
+
+== Project Overview
+
+* *Domain*: Payments | Event-Driven Architecture | Distributed Systems | Resilience & Observability
+* *Architecture*: CQRS + Event-Driven Architecture with Axon Framework
+* *Java Version*: 17
+* *Spring Boot*: 3.x
+* *Axon Framework*: 4.7.4
+
+##############################################
+
+== ✔️ core-events-ri-lti
+
+* *Location*: `/Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/core-events-ri-lti`
+
+* *Purpose*: Shared event definitions for the payment processing platform
+
+##############################################
+
+*Classes Created*
+
+.core-events-ri-lti classes
+[%collapsible]
+====
+* *PaymentEvent.java*: Base abstract class for all payment-related events in the CQRS event-driven architecture.
+  Base abstract event class
+
+* *PaymentInitiatedEvent.java* : Event fired when a new payment transaction is initiated in the payment processing platform. Used by: AuthorizationService
+
+* *PaymentAuthorizedEvent.java*: Event fired when a payment transaction has been successfully authorized by the AuthorizationService. Used by: SettlementService
+
+* *PaymentRejectedEvent.java*: Event fired when a payment transaction has been rejected by the AuthorizationService. Used by: OrderService (compensation)
+
+* *PaymentSettledEvent.java*: Event fired when a payment transaction has been successfully settled with the payment processor. Used by: OrderService (completion)
+
+* *Payment.java*Domain model representing full payment lifecycle
+  *PaymentStatus enum*:
+
+  * INITIATED, AUTHORIZED, REJECTED, SETTLED, FAILED
+====
+
+
+
+##############################################
+
+---
+
+== ✔️ authorization-service-ri
+
+* *Location*:`/Users/nareshchaurasia/nc/Java-Architect/Java-CQRS-SAGA/authorization-service-ri`
+
+* *Purpose*:Payment authorization and risk assessment
+
+##############################################
+
+*Classes Created*
+
+.authorization-service-ri-lti classes
+[%collapsible]
+====
+* *AuthorizationServiceApplication.java*
+  Main Spring Boot application
+
+  * Port: 8081
+  * Axon Server: localhost:8124
+  * Database: H2 (in-memory)
+
+* *AuthorizationRulesEngine.java*
+
+ Authorization engine that evaluates payment transactions against business rules and risk criteria. Performs real-time authorization decisions based on amount limits, risk scoring, merchant validation, and currency support to ensure secure payment processing.
+
+* *AuthorizationResult.java*: Result object containing the outcome of payment authorization evaluation.
+
+* *AuthorizationEventHandler.java*: Axon event handler
+
+* #Receives: PaymentInitiatedEvent. How. Put in the event bus#.
+* Publishes: PaymentAuthorizedEvent or PaymentRejectedEvent
+* Integration: Axon EventBus
+
+* *AuthorizationController.java*
+  REST API controller
+
+  * Endpoint: POST `/api/authorization/test`
+  * Purpose: Test authorization workflow
+
+* *XStreamConfig.java*: XStream configuration for secure XML serialization in the authorization service. Configures allowed package patterns for payment platform events and models to prevent security vulnerabilities during event serialization/deserialization with Axon Framework.
+====
+
+##############################################
+
+*application.properties*
+
+----
+spring.datasource.url=jdbc:h2:mem:authorizationdb
+spring.datasource.username=sa
+spring.datasource.password=password
+spring.jpa.hibernate.ddl-auto=create-drop
+spring.jpa.show-sql=false
+
+
+axon.axonserver.servers=localhost:8124
+axon.axonserver.token=123abc
+axon.serializer.events=xstream
+axon.serializer.messages=xstream
+
+axon.serialization.xstream.allowed-types=com.payment.platform.**,com.appsdeveloperblog.**
+----
+
+
+##############################################
+
+---
+
+*Event Flow Architecture*
+
+*Payment Authorization Workflow*
+
+1. REST API → AuthorizationController.test()
+2. EventBus.publish(PaymentInitiatedEvent)
+3. AuthorizationEventHandler.on(PaymentInitiatedEvent)
+4. AuthorizationRulesEngine.evaluate(event)
+5. Business Rules → AuthorizationResult
+6. EventBus.publish(PaymentAuthorizedEvent OR PaymentRejectedEvent)
+7. Downstream services process results
+
+*Integration Points*
+
+* Upstream:
+** REST API
+** OrderService (via events)
+
+* Downstream:
+** SettlementService
+** OrderService (via events)
+
+* Infrastructure:
+** Axon Server (event distribution)
+** H2 Database (audit and rule storage)
+
+##############################################
+
+
+== Testing Instructions
+
+=== Axon Server
+
+* Download: https://download.axoniq.io/axonserver/AxonServer-4.6.7.zip
+
+----
+/Users/nareshchaurasia/nc/Java-Architect/AxonServer-4.6.7
+java -jar axonserver.jar
+----
+
+*Start Authorization Service*
+
+----
+mvn spring-boot:run
+
+curl -X POST http://localhost:8081/api/authorization/test \
+  -H "Content-Type: application/json" \
+  -d '{"orderId":"order-123","amount":"100.00","currency":"USD","userId":"user-123","merchantId":"merchant-456","paymentMethod":"CREDIT_CARD"}'
+
+
+2026-02-09T21:46:56.572+05:30  INFO 62841 --- [tion.handler]-0] c.p.p.a.h.AuthorizationEventHandler      : 1. Processing payment authorization for paymentId: ec4848c3-75bc-4c77-92f7-4c7f057f5f74
+2026-02-09T21:46:56.572+05:30  INFO 62841 --- [tion.handler]-0] c.p.p.a.s.AuthorizationRulesEngine       : 2. Evaluating authorization rules for payment: ec4848c3-75bc-4c77-92f7-4c7f057f5f74
+2026-02-09T21:46:56.572+05:30  INFO 62841 --- [tion.handler]-0] c.p.p.a.s.AuthorizationRulesEngine       : 3.Authorization result for payment ec4848c3-75bc-4c77-92f7-4c7f057f5f74: approved=true, riskScore=0
+2026-02-09T21:46:56.572+05:30  INFO 62841 --- [tion.handler]-0] c.p.p.a.h.AuthorizationEventHandler      : 4. Payment authorized: ec4848c3-75bc-4c77-92f7-4c7f057f5f74
+
+----
+
+*Expected Results*
+
+* Valid payments → PaymentAuthorizedEvent
+* Invalid payments → PaymentRejectedEvent with error codes
+* Logs show full authorization trail
+* Events visible in Axon Dashboard at [http://localhost:8024](http://localhost:8024)
+
+---
+
+
+##############################################
+
+curl -X GET "http://localhost:8024/v1/events"
+
+Command(POSTMAN) → PaymentInitiatedEvent → Authorization Logic → PaymentAuthorizedEvent
+
+id:1
+data:{"messageIdentifier":"2ecc17f0-e398-41a3-b7fc-5d49208574d0","aggregateIdentifier":"","aggregateSequenceNumber":0,"aggregateType":"","payload":{"type":"com.payment.platform.core.events.PaymentInitiatedEvent","data":"<com.payment.platform.core.events.*PaymentInitiatedEvent*>\n  <paymentId>677495be-26a8-430a-a676-089ff0adb461</paymentId>\n  <orderId>order-123</orderId>\n  <timestamp>2026-02-14T12:56:01.557579</timestamp>\n  <amount>100.00</amount>\n  <currency>USD</currency>\n  <userId>user-123</userId>\n  <merchantId>merchant-456</merchantId>\n  <paymentMethod>CREDIT_CARD</paymentMethod>\n</com.payment.platform.core.events.PaymentInitiatedEvent>","revision":""},"timestamp":1771053961558,"metaData":{}}
+
+id:2
+data:{"messageIdentifier":"2d74ea43-db99-4602-9287-f6ddca0d5455","aggregateIdentifier":"","aggregateSequenceNumber":0,"aggregateType":"","payload":{"type":"com.payment.platform.core.events.PaymentAuthorizedEvent","data":"<com.payment.platform.core.events.*PaymentAuthorizedEvent*>\n  <paymentId>677495be-26a8-430a-a676-089ff0adb461</paymentId>\n  <orderId>order-123</orderId>\n  <timestamp>2026-02-14T12:56:01.855482</timestamp>\n  <authorizationCode>AUTH_A2E13DBB</authorizationCode>\n  <riskScore>0</riskScore>\n  <amount>100.00</amount>\n</com.payment.platform.core.events.PaymentAuthorizedEvent>","revision":""},"timestamp":1771053961855,"metaData":{"traceId":"2ecc17f0-e398-41a3-b7fc-5d49208574d0","correlationId":"2ecc17f0-e398-41a3-b7fc-5d49208574d0"}}
+
+##############################################
+
+== settlment-service-ri
+
+* Start Settlement Service
+
+
+----
+ler   : 1. Processing payment settlement for authorized paymentId: 677495be-26a8-430a-a676-089ff0adb461
+2026-02-14T15:43:21.338+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.handler.SettlementEventHandler   : Event received - PaymentId: 677495be-26a8-430a-a676-089ff0adb461, OrderId: order-123, AuthCode: AUTH_A2E13DBB, RiskScore: 0, Amount: 100.00
+2026-02-14T15:43:21.338+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.handler.SettlementEventHandler   : 2. Delegating to SettlementProcessor for payment: 677495be-26a8-430a-a676-089ff0adb461
+2026-02-14T15:43:21.339+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.service.SettlementProcessor      : 2. Processing settlement for authorized payment: 677495be-26a8-430a-a676-089ff0adb461
+2026-02-14T15:43:21.339+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.service.SettlementProcessor      : Payment details - Amount: 100.00, Auth Code: AUTH_A2E13DBB, Risk Score: 0
+2026-02-14T15:43:21.339+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.service.SettlementProcessor      : Attempt 1 to settle payment: 677495be-26a8-430a-a676-089ff0adb461
+2026-02-14T15:43:21.339+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.service.SettlementProcessor      : 3. Payment settled successfully: 677495be-26a8-430a-a676-089ff0adb461, settlementId: SETTLE_1771064001339_4801
+2026-02-14T15:43:21.341+05:30  INFO 73743 --- [ment.handler]-0] c.p.p.s.handler.SettlementEventHandler   : 4. Payment settlement completed: 677495be-26a8-430a-a676-089ff0adb461, settlementId: SETTLE_1771064001339_4801
+----
+
+##############################################
+
+curl -X GET "http://localhost:8024/v1/events"
+
+
+id:1
+data:{"messageIdentifier":"2ecc17f0-e398-41a3-b7fc-5d49208574d0","aggregateIdentifier":"","aggregateSequenceNumber":0,"aggregateType":"","payload":{"type":"com.payment.platform.core.events.PaymentInitiatedEvent","data":"<com.payment.platform.core.events.*PaymentInitiatedEvent*>\n  <paymentId>677495be-26a8-430a-a676-089ff0adb461</paymentId>\n  <orderId>order-123</orderId>\n  <timestamp>2026-02-14T12:56:01.557579</timestamp>\n  <amount>100.00</amount>\n  <currency>USD</currency>\n  <userId>user-123</userId>\n  <merchantId>merchant-456</merchantId>\n  <paymentMethod>CREDIT_CARD</paymentMethod>\n</com.payment.platform.core.events.PaymentInitiatedEvent>","revision":""},"timestamp":1771053961558,"metaData":{}}
+
+id:2
+data:{"messageIdentifier":"2d74ea43-db99-4602-9287-f6ddca0d5455","aggregateIdentifier":"","aggregateSequenceNumber":0,"aggregateType":"","payload":{"type":"com.payment.platform.core.events.PaymentAuthorizedEvent","data":"<com.payment.platform.core.events.*PaymentAuthorizedEvent*>\n  <paymentId>677495be-26a8-430a-a676-089ff0adb461</paymentId>\n  <orderId>order-123</orderId>\n  <timestamp>2026-02-14T12:56:01.855482</timestamp>\n  <authorizationCode>AUTH_A2E13DBB</authorizationCode>\n  <riskScore>0</riskScore>\n  <amount>100.00</amount>\n</com.payment.platform.core.events.PaymentAuthorizedEvent>","revision":""},"timestamp":1771053961855,"metaData":{"traceId":"2ecc17f0-e398-41a3-b7fc-5d49208574d0","correlationId":"2ecc17f0-e398-41a3-b7fc-5d49208574d0"}}
+
+id:3
+data:{"messageIdentifier":"478a67e7-007b-4c9d-99e3-485340587765","aggregateIdentifier":"","aggregateSequenceNumber":0,"aggregateType":"","payload":{"type":"com.payment.platform.core.events.PaymentSettledEvent","data":"<com.payment.platform.core.events.*PaymentSettledEvent*>\n  <paymentId>677495be-26a8-430a-a676-089ff0adb461</paymentId>\n  <orderId>order-123</orderId>\n  <timestamp>2026-02-14T15:43:21.33997</timestamp>\n  <settlementId>SETTLE_1771064001339_4801</settlementId>\n  <settlementDate>2026-02-14T15:43:21.339959</settlementDate>\n</com.payment.platform.core.events.PaymentSettledEvent>","revision":""},"timestamp":1771064001340,"metaData":{"traceId":"2ecc17f0-e398-41a3-b7fc-5d49208574d0","correlationId":"2d74ea43-db99-4602-9287-f6ddca0d5455"}}
+
+##############################################
+
+---
+
+== Notification Service Role
+
+*What It Does:*
+- Receives events from Axon Server (PaymentSettledEvent, PaymentRejectedEvent, etc.)
+- Sends notifications (email, SMS, push notifications)
+- Logs notifications to database for audit trail
+- Provides REST APIs to query notification status
+
+*What It Does NOT Do:*
+- Does NOT publish events back to Axon Server
+- Does NOT trigger other services
+- Does NOT participate in command/query flow
+
+*Event Flow Architecture*
+
+----
+REST API → Authorization Service → Axon Server
+    ↓
+PaymentInitiatedEvent → Authorization Service
+    ↓  
+PaymentAuthorizedEvent → Settlement Service
+    ↓
+PaymentSettledEvent → Notification Service (TERMINAL)
+    ↓
+[Email/SMS sent] → END
+----
+
+*Why This Design Makes Sense*
+- Single Responsibility: Notification service only handles notifications
+- No Side Effects: Sending notifications shouldn't trigger business logic
+- Audit Trail: Notifications are logged but don't affect payment flow
+- Resilience: If notification fails, payment is still complete
+
+*NotificationSentEvent (Alternative - NOT implemented)*
+
+- Could publish NotificationSentEvent for tracking
+- Could trigger analytics service
+* Could update customer communication preferences
+* Adds complexity but provides more observability
+
+##############################################
+
+---
+
+
+##############################################
+
+---
+
+
+##############################################
+
+---
+
+
+##############################################
+
+---
+
+

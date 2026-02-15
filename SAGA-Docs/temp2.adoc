@@ -1,0 +1,40 @@
+= Notification Service Role
+
+*What It Does:*
+- Receives events from Axon Server (PaymentSettledEvent, PaymentRejectedEvent, etc.)
+- Sends notifications (email, SMS, push notifications)
+- Logs notifications to database for audit trail
+- Provides REST APIs to query notification status
+
+*What It Does NOT Do:*
+- Does NOT publish events back to Axon Server
+- Does NOT trigger other services
+- Does NOT participate in command/query flow
+
+*Event Flow Architecture*
+
+
+----
+REST API → Authorization Service → Axon Server
+    ↓
+PaymentInitiatedEvent → Authorization Service
+    ↓  
+PaymentAuthorizedEvent → Settlement Service
+    ↓
+PaymentSettledEvent → Notification Service (TERMINAL)
+    ↓
+[Email/SMS sent] → END
+----
+
+*Why This Design Makes Sense*
+- Single Responsibility: Notification service only handles notifications
+- No Side Effects: Sending notifications shouldn't trigger business logic
+- Audit Trail: Notifications are logged but don't affect payment flow
+- Resilience: If notification fails, payment is still complete
+
+*NotificationSentEvent (Alternative - NOT implemented)*
+
+- Could publish NotificationSentEvent for tracking
+- Could trigger analytics service
+* Could update customer communication preferences
+* Adds complexity but provides more observability

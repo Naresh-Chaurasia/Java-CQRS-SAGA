@@ -10,6 +10,8 @@ import com.appsdeveloperblog.estore.OrdersService.core.data.OrdersRepository;
 import com.appsdeveloperblog.estore.OrdersService.core.events.OrderApprovedEvent;
 import com.appsdeveloperblog.estore.OrdersService.core.events.OrderCreatedEvent;
 import com.appsdeveloperblog.estore.OrdersService.core.events.OrderRejectedEvent;
+import com.appsdeveloperblog.estore.OrdersService.core.model.OrderStatus;
+import com.payment.platform.core.events.PaymentSettledEvent;
 
 import org.axonframework.config.ProcessingGroup;
 import org.axonframework.eventhandling.EventHandler;
@@ -55,6 +57,22 @@ public class OrderEventsHandler {
     	OrderEntity orderEntity = ordersRepository.findByOrderId(orderRejectedEvent.getOrderId());
     	orderEntity.setOrderStatus(orderRejectedEvent.getOrderStatus());
     	ordersRepository.save(orderEntity);
+    }
+    
+    @EventHandler
+    public void on(PaymentSettledEvent paymentSettledEvent) {
+    	OrderEntity orderEntity = ordersRepository.findByOrderId(paymentSettledEvent.getOrderId());
+    	if(orderEntity == null) {
+    		// TODO: Do something about it
+    		return;
+    	}
+    	
+    	// Update order status to COMPLETED
+    	orderEntity.setOrderStatus(OrderStatus.COMPLETED);
+    	ordersRepository.save(orderEntity);
+    	
+    	System.out.println("Order completed successfully: " + paymentSettledEvent.getOrderId() + 
+    			", settlementId: " + paymentSettledEvent.getSettlementId());
     }
     
 }

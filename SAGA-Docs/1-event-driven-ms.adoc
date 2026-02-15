@@ -1,0 +1,865 @@
+= Event Driven Microservices
+:toc: right
+:toclevels: 5
+:sectnums: 5
+:sectnumlevel: 5
+
+== Authorization Service
+
+The *Authorization Service* is a Spring Boot–based microservice responsible for evaluating payment authorization requests.
+It acts as the **first service in the payment processing pipeline**, applying business rules and risk checks before downstream processing.
+
+* #Pending#:The service is built using the *CQRS and Event Sourcing* patterns, implemented with the *Axon Framework*.
+** How CQRS and Event Sourcing
+
+== Application Components
+
+*AuthorizationServiceApplication.java*
+
+* Purpose: Spring Boot entry point for the Authorization microservice.
+
+---
+
+* Role: First service in the payment processing pipeline.
+
+---
+
+* #Integration#: 
+** Axon Framework for CQRS and Event Sourcing
+** Axon Server for command and event routing
+*** I understand that from Controller, PaymentInitiatedEvent is published to Axon Server, and then AuthorizationEventHandler take over.
+
+---
+
+* Configuration
+
+  * Runs on port *8081*
+  * Axon Server at *localhost:8124*
+  * H2 in-memory database for persistence
+
+##############################################
+
+---
+
+*AuthorizationRulesEngine.java - Business Logic Service*
+
+* Purpose: Evaluates payment authorization rules and performs risk assessment.
+
+* Features
+
+  * Amount limit validation
+  * Risk scoring
+  * Merchant validation
+  * Currency validation
+
+* Output
+  Produces a structured *AuthorizationResult* with detailed decision feedback.
+
+* Error Codes
+
+  * AMOUNT_EXCEEDS_LIMIT
+  * HIGH_RISK
+  * INVALID_MERCHANT
+  * INVALID_CURRENCY
+
+##############################################
+
+---
+
+*AuthorizationResult.java - Result Data Object*
+
+* Purpose
+  Encapsulates the outcome of an authorization decision.
+
+* Contains
+
+  * Approval or rejection status
+  * Calculated risk score
+  * Detailed rejection reasons (if any)
+
+* Usage
+  Enables downstream services to handle authorization outcomes consistently and reliably.
+
+##############################################
+
+---
+
+*AuthorizationEventHandler.java - Event Handler*
+
+* Purpose: Orchestrates the payment authorization workflow using events.
+
+* Integration
+** Receives domain events
+** Delegates decision-making to *AuthorizationRulesEngine*
+** Publishes authorization result events
+
+* Error Handling
+** Comprehensive exception handling
+** Audit-focused logging for traceability
+
+* Architecture Role
+** Critical component that bridges authorization logic with downstream services.
+
+##############################################
+
+---
+
+=== Event Flow
+
+## [source]
+
+PaymentInitiatedEvent
+↓
+AuthorizationRulesEngine
+↓
+PaymentAuthorizedEvent / PaymentRejectedEvent
+---------------------------------------------
+
+=== Downstream Services
+
+* *SettlementService*
+  Triggered when payment is approved.
+
+* *OrderService*
+  Triggered when payment is rejected.
+
+=== CQRS Pattern
+
+* Clear separation of commands and events
+* Axon Framework used for command handling, event publishing, and event handling
+* Scales cleanly with distributed microservices
+
+=== Audit Trail
+
+* Complete logging of authorization decisions
+* Supports compliance, debugging, and operational monitoring
+
+---
+
+If you want, next we can:
+
+* Convert this into **module-level JavaDoc**
+* Create a **README.adoc** for the repo
+* Or align it with **DDD terminology** (Aggregate, Policy, Domain Event)
+
+
+
+
+## Overview
+This document provides a step-by-step implementation guide for building an event-driven Payment Processing Platform using Spring Boot and Axon Framework.
+
+## Day 1: Foundation & Setup
+
+### 1.1 Project Structure Setup
+[source,bash]
+----
+# Create new payment platform structure
+mkdir -p payment-platform/{authorization-service,settlement-service,notification-service,reconciliation-service,api-gateway,frontend}
+cd payment-platform
+----
+
+### 1.2 Service Directory Structure
+```
+payment-platform/
+├── authorization-service/
+│   ├── pom.xml
+│   └── src/main/java/com/payment/auth/
+│       ├── AuthorizationApplication.java
+│       ├── model/
+│       ├── events/
+│       └── handler/
+├── settlement-service/
+├── notification-service/
+├── reconciliation-service/
+├── api-gateway/
+└── shared-events/
+```
+
+### 1.3 Parent POM Configuration
+[source,xml]
+----
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-dependencies</artifactId>
+            <version>3.1.0</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-spring-boot-starter</artifactId>
+            <version>4.7.4</version>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+----
+
+### 1.4 Base Event Classes
+[source,java]
+----
+public class PaymentInitiatedEvent {
+    private final String paymentId;
+    private final BigDecimal amount;
+    private final String currency;
+    private final String userId;
+    private final String merchantId;
+    private final LocalDateTime timestamp;
+    
+    // Constructor, getters, builders
+}
+
+public class PaymentAuthorizedEvent {
+    private final String paymentId;
+    private final LocalDateTime authorizedAt;
+    private final String authorizedBy;
+    
+    // Constructor, getters
+}
+
+public class PaymentRejectedEvent {
+    private final String paymentId;
+    private final String reason;
+    private final String rejectionCode;
+    private final LocalDateTime rejectedAt;
+    
+    // Constructor, getters
+}
+
+public class PaymentSettledEvent {
+    private final String paymentId;
+    private final String settlementId;
+    private final BigDecimal settledAmount;
+    private final LocalDateTime settledAt;
+    
+    // Constructor, getters
+}
+----
+
+### 1.5 Core Domain Models
+[source,java]
+----
+@Entity
+@Table(name = "payment_authorizations")
+public class PaymentAuthorization {
+    @Id
+    private String paymentId;
+    private BigDecimal amount;
+    private String currency;
+    private String userId;
+    private String merchantId;
+    private AuthorizationStatus status;
+    private String riskScore;
+    private LocalDateTime initiatedAt;
+    private LocalDateTime processedAt;
+    private String processedBy;
+    
+    // Enum, constructors, getters
+}
+
+public enum AuthorizationStatus {
+    PENDING, AUTHORIZED, REJECTED
+}
+----
+
+## Day 2: Payment Initiation Service
+
+### 2.1 Enhanced Payment Controller
+[source,java]
+----
+@RestController
+@RequestMapping("/api/payments")
+public class PaymentController {
+    
+    @Autowired
+    private CommandGateway commandGateway;
+    @Autowired
+    private PaymentRepository paymentRepository;
+    
+    @PostMapping
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public PaymentInitiationResponse initiatePayment(
+            @Valid @RequestBody PaymentInitiationRequest request) {
+        
+        // Generate payment ID
+        String paymentId = UUID.randomUUID().toString();
+        
+        // Create command
+        InitiatePaymentCommand command = InitiatePaymentCommand.builder()
+            .paymentId(paymentId)
+            .amount(request.getAmount())
+            .currency(request.getCurrency())
+            .userId(request.getUserId())
+            .merchantId(request.getMerchantId())
+            .build();
+            
+        // Persist initial payment record
+        PaymentEntity payment = new PaymentEntity();
+        payment.setPaymentId(paymentId);
+        payment.setAmount(request.getAmount());
+        payment.setCurrency(request.getCurrency());
+        payment.setUserId(request.getUserId());
+        payment.setMerchantId(request.getMerchantId());
+        payment.setStatus(PaymentStatus.INITIATED);
+        payment.setCreatedAt(LocalDateTime.now());
+        paymentRepository.save(payment);
+        
+        // Send command (async)
+        commandGateway.send(command);
+        
+        // Return immediate response
+        return new PaymentInitiationResponse(paymentId, "Payment initiated");
+    }
+}
+----
+
+### 2.2 Payment Command & Entity
+[source,java]
+----
+@Command
+public class InitiatePaymentCommand {
+    private final String paymentId;
+    private final BigDecimal amount;
+    private final String currency;
+    private final String userId;
+    private final String merchantId;
+    
+    // Constructor, getters
+}
+
+@Entity
+@Table(name = "payments")
+public class PaymentEntity {
+    @Id
+    private String paymentId;
+    private BigDecimal amount;
+    private String currency;
+    private String userId;
+    private String merchantId;
+    private PaymentStatus status;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    
+    // Enum, constructors, getters
+}
+
+public enum PaymentStatus {
+    INITIATED, AUTHORIZED, REJECTED, SETTLED, FAILED
+}
+----
+
+### 2.3 Payment Event Handler
+[source,java]
+----
+@Component
+public class PaymentEventHandler {
+    
+    @Autowired
+    private PaymentRepository paymentRepository;
+    @Autowired
+    private EventGateway eventGateway;
+    
+    @EventHandler
+    public void on(InitiatePaymentCommand command) {
+        // Publish payment initiated event
+        PaymentInitiatedEvent event = new PaymentInitiatedEvent(
+            command.getPaymentId(),
+            command.getAmount(),
+            command.getCurrency(),
+            command.getUserId(),
+            command.getMerchantId(),
+            LocalDateTime.now()
+        );
+        
+        eventGateway.publish(event);
+    }
+}
+----
+
+## Day 3: Authorization Service
+
+### 3.1 Authorization Service Main
+[source,java]
+----
+@SpringBootApplication
+@EnableAxon
+public class AuthorizationApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(AuthorizationApplication.class, args);
+    }
+}
+----
+
+### 3.2 Authorization Rules Engine
+[source,java]
+----
+@Service
+public class AuthorizationRuleEngine {
+    
+    private static final BigDecimal HIGH_RISK_THRESHOLD = new BigDecimal("10000");
+    private static final Set<String> SANCTIONED_COUNTRIES = Set.of("XX", "YY");
+    
+    public AuthorizationResult evaluate(PaymentInitiatedEvent event) {
+        // Rule 1: Amount check
+        if (event.getAmount().compareTo(HIGH_RISK_THRESHOLD) > 0) {
+            return AuthorizationResult.rejected("AMOUNT_EXCEEDS_LIMIT", 
+                "Amount exceeds daily limit");
+        }
+        
+        // Rule 2: User verification (mock)
+        if (!isUserVerified(event.getUserId())) {
+            return AuthorizationResult.rejected("USER_NOT_VERIFIED", 
+                "User identity not verified");
+        }
+        
+        // Rule 3: Risk scoring (mock)
+        int riskScore = calculateRiskScore(event);
+        if (riskScore > 80) {
+            return AuthorizationResult.rejected("HIGH_RISK_SCORE", 
+                "Risk score too high: " + riskScore);
+        }
+        
+        return AuthorizationResult.authorized("Payment approved");
+    }
+    
+    private boolean isUserVerified(String userId) {
+        // Mock user verification
+        return !userId.startsWith("unverified_");
+    }
+    
+    private int calculateRiskScore(PaymentInitiatedEvent event) {
+        // Mock risk calculation
+        int score = 20; // Base score
+        
+        if (event.getAmount().compareTo(new BigDecimal("5000")) > 0) {
+            score += 30;
+        }
+        
+        if (event.getUserId().startsWith("new_")) {
+            score += 25;
+        }
+        
+        return score;
+    }
+}
+----
+
+### 3.3 Authorization Event Handler
+[source,java]
+----
+@Component
+@Slf4j
+public class AuthorizationEventHandler {
+    
+    @Autowired
+    private AuthorizationRuleEngine ruleEngine;
+    @Autowired
+    private AuthorizationRepository authRepository;
+    @Autowired
+    private EventGateway eventGateway;
+    
+    @EventHandler
+    public void on(PaymentInitiatedEvent event) {
+        log.info("Processing authorization for payment: {}", event.getPaymentId());
+        
+        // Persist authorization record
+        PaymentAuthorization auth = new PaymentAuthorization();
+        auth.setPaymentId(event.getPaymentId());
+        auth.setAmount(event.getAmount());
+        auth.setCurrency(event.getCurrency());
+        auth.setUserId(event.getUserId());
+        auth.setMerchantId(event.getMerchantId());
+        auth.setStatus(AuthorizationStatus.PENDING);
+        auth.setInitiatedAt(event.getTimestamp());
+        authRepository.save(auth);
+        
+        // Evaluate authorization rules
+        AuthorizationResult result = ruleEngine.evaluate(event);
+        
+        // Update authorization record
+        auth.setStatus(result.isAuthorized() ? 
+            AuthorizationStatus.AUTHORIZED : AuthorizationStatus.REJECTED);
+        auth.setProcessedAt(LocalDateTime.now());
+        auth.setProcessedBy("AuthorizationEngine");
+        authRepository.save(auth);
+        
+        // Publish appropriate event
+        if (result.isAuthorized()) {
+            eventGateway.publish(new PaymentAuthorizedEvent(
+                event.getPaymentId(),
+                LocalDateTime.now(),
+                "AuthorizationEngine"
+            ));
+            log.info("Payment {} authorized", event.getPaymentId());
+        } else {
+            eventGateway.publish(new PaymentRejectedEvent(
+                event.getPaymentId(),
+                result.getReason(),
+                result.getRejectionCode(),
+                LocalDateTime.now()
+            ));
+            log.warn("Payment {} rejected: {}", event.getPaymentId(), result.getReason());
+        }
+    }
+}
+----
+
+## Day 4: Settlement & Notification Services
+
+### 4.1 Settlement Service Event Handler
+[source,java]
+----
+@Component
+@Slf4j
+public class SettlementEventHandler {
+    
+    @Autowired
+    private PaymentRepository paymentRepository;
+    @Autowired
+    private LedgerRepository ledgerRepository;
+    @Autowired
+    private EventGateway eventGateway;
+    
+    @EventHandler
+    public void on(PaymentAuthorizedEvent event) {
+        log.info("Processing settlement for authorized payment: {}", event.getPaymentId());
+        
+        // Update payment status
+        PaymentEntity payment = paymentRepository.findById(event.getPaymentId())
+            .orElseThrow(() -> new PaymentNotFoundException(event.getPaymentId()));
+        payment.setStatus(PaymentStatus.SETTLED);
+        payment.setUpdatedAt(LocalDateTime.now());
+        paymentRepository.save(payment);
+        
+        // Create ledger entry
+        LedgerEntry ledgerEntry = new LedgerEntry();
+        ledgerEntry.setSettlementId(UUID.randomUUID().toString());
+        ledgerEntry.setPaymentId(event.getPaymentId());
+        ledgerEntry.setAmount(payment.getAmount());
+        ledgerEntry.setCurrency(payment.getCurrency());
+        ledgerEntry.setSettlementDate(LocalDateTime.now());
+        ledgerEntry.setStatus(LedgerStatus.SETTLED);
+        ledgerRepository.save(ledgerEntry);
+        
+        // Publish settlement event
+        eventGateway.publish(new PaymentSettledEvent(
+            event.getPaymentId(),
+            ledgerEntry.getSettlementId(),
+            payment.getAmount(),
+            LocalDateTime.now()
+        ));
+        
+        log.info("Payment {} settled with settlement ID: {}", 
+            event.getPaymentId(), ledgerEntry.getSettlementId());
+    }
+}
+----
+
+### 4.2 Notification Service Event Handler
+[source,java]
+----
+@Component
+@Slf4j
+public class NotificationEventHandler {
+    
+    @EventHandler
+    public void on(PaymentSettledEvent event) {
+        log.info("Processing settlement notification for payment: {}", event.getPaymentId());
+        
+        // Create unified notification
+        NotificationMessage notification = NotificationMessage.builder()
+            .type(NotificationType.PAYMENT_SETTLED)
+            .recipient(getUserEmail(event.getPaymentId()))
+            .subject("Payment Settled Successfully")
+            .message(buildSettlementMessage(event))
+            .timestamp(LocalDateTime.now())
+            .channels(Arrays.asList(Channel.EMAIL, Channel.DASHBOARD))
+            .build();
+            
+        // Send notification (mock implementation)
+        sendNotification(notification);
+        
+        log.info("Settlement notification sent for payment: {}", event.getPaymentId());
+    }
+    
+    @EventHandler
+    public void on(PaymentRejectedEvent event) {
+        log.info("Processing rejection notification for payment: {}", event.getPaymentId());
+        
+        NotificationMessage notification = NotificationMessage.builder()
+            .type(NotificationType.PAYMENT_REJECTED)
+            .recipient(getUserEmail(event.getPaymentId()))
+            .subject("Payment Rejected")
+            .message(buildRejectionMessage(event))
+            .timestamp(LocalDateTime.now())
+            .channels(Arrays.asList(Channel.EMAIL, Channel.DASHBOARD))
+            .build();
+            
+        sendNotification(notification);
+        
+        log.warn("Rejection notification sent for payment: {}", event.getPaymentId());
+    }
+    
+    private String buildSettlementMessage(PaymentSettledEvent event) {
+        return String.format(
+            "Your payment of %s %s has been successfully settled. " +
+            "Settlement ID: %s", 
+            event.getSettledAmount(), 
+            event.getCurrency(), 
+            event.getSettlementId()
+        );
+    }
+    
+    private String buildRejectionMessage(PaymentRejectedEvent event) {
+        return String.format(
+            "Your payment has been rejected. Reason: %s (Code: %s)", 
+            event.getReason(), 
+            event.getRejectionCode()
+        );
+    }
+    
+    private void sendNotification(NotificationMessage notification) {
+        // Mock notification sending
+        log.info("Notification sent via {}: {}", 
+            notification.getChannels(), 
+            notification.getMessage());
+    }
+    
+    private String getUserEmail(String paymentId) {
+        // Mock email lookup
+        return "user" + paymentId.substring(0, 8) + "@example.com";
+    }
+}
+----
+
+## Day 5: Reconciliation, Security & Demo
+
+### 5.1 Reconciliation Service
+[source,java]
+----
+@SpringBootApplication
+@EnableScheduling
+public class ReconciliationApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(ReconciliationApplication.class, args);
+    }
+}
+
+@Service
+@Slf4j
+public class ReconciliationService {
+    
+    @Autowired
+    private PaymentRepository paymentRepository;
+    @Autowired
+    private LedgerRepository ledgerRepository;
+    
+    // Run reconciliation every hour
+    @Scheduled(fixedRate = 3600000) // 1 hour
+    public void performReconciliation() {
+        log.info("Starting payment reconciliation process");
+        
+        ReconciliationResult result = new ReconciliationResult();
+        
+        // Get all settled payments
+        List<PaymentEntity> settledPayments = paymentRepository
+            .findByStatus(PaymentStatus.SETTLED);
+        
+        // Get all ledger entries
+        List<LedgerEntry> ledgerEntries = ledgerRepository.findAll();
+        
+        // Compare and find mismatches
+        for (PaymentEntity payment : settledPayments) {
+            Optional<LedgerEntry> correspondingLedger = ledgerEntries.stream()
+                .filter(ledger -> ledger.getPaymentId().equals(payment.getPaymentId()))
+                .findFirst();
+                
+            if (correspondingLedger.isEmpty()) {
+                result.addMismatch(new ReconciliationMismatch(
+                    payment.getPaymentId(),
+                    "MISSING_LEDGER_ENTRY",
+                    "Payment settled but no ledger entry found",
+                    payment.getAmount()
+                ));
+            } else if (!correspondingLedger.get().getAmount().equals(payment.getAmount())) {
+                result.addMismatch(new ReconciliationMismatch(
+                    payment.getPaymentId(),
+                    "AMOUNT_MISMATCH",
+                    String.format("Payment: %s, Ledger: %s", 
+                        payment.getAmount(), 
+                        correspondingLedger.get().getAmount()),
+                    payment.getAmount()
+                ));
+            } else {
+                result.addMatchedPayment(payment.getPaymentId());
+            }
+        }
+        
+        // Generate reconciliation report
+        generateReconciliationReport(result);
+        log.info("Reconciliation completed. Matched: {}, Mismatches: {}", 
+            result.getMatchedCount(), 
+            result.getMismatchCount());
+    }
+    
+    private void generateReconciliationReport(ReconciliationResult result) {
+        log.info("=== RECONCILIATION REPORT ===");
+        log.info("Total Payments Processed: {}", result.getTotalPayments());
+        log.info("Matched: {}", result.getMatchedCount());
+        log.info("Mismatches: {}", result.getMismatchCount());
+        
+        if (result.hasMismatches()) {
+            log.warn("MISMATCHES FOUND:");
+            result.getMismatches().forEach(mismatch -> 
+                log.warn("Payment {}: {} - {}", 
+                    mismatch.getPaymentId(), 
+                    mismatch.getType(), 
+                    mismatch.getDescription()));
+        }
+        log.info("=== END REPORT ===");
+    }
+}
+----
+
+### 5.2 Security Configuration
+[source,properties]
+----
+# Security
+spring.security.oauth2.resourceserver.jwt.issuer-uri=http://localhost:8080/auth
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:8080/.well-known/jwks.json
+
+# Masking sensitive data in logs
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
+logging.level.com.payment=INFO
+----
+
+### 5.3 API Gateway Configuration
+[source,java]
+----
+@RestController
+@RequestMapping("/api/v1")
+public class PaymentGatewayController {
+    
+    @Autowired
+    private RestTemplate paymentServiceTemplate;
+    
+    @PostMapping("/payments/initiate")
+    public ResponseEntity<?> initiatePayment(
+            @RequestHeader("Authorization") String authHeader,
+            @Valid @RequestBody PaymentInitiationRequest request) {
+        
+        // Validate JWT token
+        if (!isValidToken(authHeader)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        
+        // Forward to payment service
+        try {
+            ResponseEntity<?> response = paymentServiceTemplate.postForEntity(
+                "http://settlement-service/api/payments",
+                request,
+                Object.class
+            );
+            return ResponseEntity.accepted().body(response.getBody());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Payment service unavailable");
+        }
+    }
+    
+    private boolean isValidToken(String authHeader) {
+        // Mock JWT validation
+        return authHeader != null && authHeader.startsWith("Bearer ");
+    }
+}
+----
+
+## Testing & Demo Preparation
+
+### Test Scripts
+[source,bash]
+----
+#!/bin/bash
+# test-payment-flow.sh
+
+echo "Testing Payment Flow..."
+
+# 1. Initiate Payment
+echo "1. Initiating payment..."
+PAYMENT_RESPONSE=$(curl -s -X POST http://localhost:8080/api/payments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 100.00,
+    "currency": "USD",
+    "userId": "user123",
+    "merchantId": "merchant456"
+  }')
+
+PAYMENT_ID=$(echo $PAYMENT_RESPONSE | jq -r '.paymentId')
+echo "Payment initiated with ID: $PAYMENT_ID"
+
+# 2. Wait for processing
+echo "2. Waiting for authorization and settlement..."
+sleep 5
+
+# 3. Check payment status
+echo "3. Checking payment status..."
+curl -s http://localhost:8080/api/payments/$PAYMENT_ID
+
+echo "Payment flow test completed!"
+----
+
+### Demo Script
+[source,bash]
+----
+#!/bin/bash
+# demo.sh
+
+echo "=== PAYMENT PROCESSING PLATFORM DEMO ==="
+
+# Start all services
+echo "Starting services..."
+cd authorization-service && mvn spring-boot:run &
+cd settlement-service && mvn spring-boot:run &
+cd notification-service && mvn spring-boot:run &
+cd reconciliation-service && mvn spring-boot:run &
+cd api-gateway && mvn spring-boot:run &
+
+# Wait for services to start
+sleep 30
+
+# Run demo payment flow
+./test-payment-flow.sh
+
+echo "Demo completed! Check logs for each service to see event flow."
+----
+
+## Architecture Decisions
+
+### Why Event-Driven Architecture?
+* **Decoupling**: Each service can scale independently
+* **Resilience**: Failed authorization doesn't break settlement
+* **Audit Trail**: Natural event log for compliance
+* **Flexibility**: Easy to add new payment processors
+
+### Why These Domain Boundaries?
+* **Single Responsibility**: Each service has one clear purpose
+* **Data Ownership**: Authorization owns rules, Settlement owns ledger
+* **Team Autonomy**: Different teams can own different services
+
+### Error Handling Flow
+* **Eventual Consistency**: Services eventually reach consistent state
+* **Dead Letter Queue**: Failed events can be reprocessed
+* **Circuit Breakers**: Prevent cascade failures
+
+## Next Steps
+
+Choose which day to implement:
+1. **Day 1**: Project structure and shared events
+2. **Day 2**: Enhanced payment service
+3. **Day 3**: Authorization service
+4. **Day 4**: Settlement and notifications
+5. **Day 5**: Reconciliation and security
+
+Let me know which step you want to start with!
