@@ -1,0 +1,1 @@
+export PATH="/Library/Java/JavaVirtualMachines/jdk-11.0.15.1.jdk/Contents/Home/bin:$PATH"
